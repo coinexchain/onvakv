@@ -66,7 +66,7 @@ type (
 
 	de struct { // d element
 		k []byte
-		v uint64
+		v []byte
 	}
 
 	// Enumerator captures the state of enumerating a tree. It is returned
@@ -331,7 +331,7 @@ func (t *Tree) Delete(k []byte) (ok bool) {
 	}
 }
 
-func (t *Tree) extract(q *d, i int) { // (r uint64) {
+func (t *Tree) extract(q *d, i int) { // (r []byte) {
 	t.ver++
 	//r = q.d[i].v // prepared for Extract
 	q.c--
@@ -380,7 +380,7 @@ func (t *Tree) find(q interface{}, k []byte) (i int, ok bool) {
 
 // First returns the first item of the tree in the key collating order, or
 // (zero-value, zero-value) if the tree is empty.
-func (t *Tree) First() (k []byte, v uint64) {
+func (t *Tree) First() (k []byte, v []byte) {
 	if q := t.first; q != nil {
 		q := &q.d[0]
 		k, v = q.k, q.v
@@ -390,7 +390,7 @@ func (t *Tree) First() (k []byte, v uint64) {
 
 // Get returns the value associated with k and true if it exists. Otherwise Get
 // returns (zero-value, false).
-func (t *Tree) Get(k []byte) (v uint64, ok bool) {
+func (t *Tree) Get(k []byte) (v []byte, ok bool) {
 	q := t.r
 	if q == nil {
 		return
@@ -416,7 +416,7 @@ func (t *Tree) Get(k []byte) (v uint64, ok bool) {
 	}
 }
 
-func (t *Tree) insert(q *d, i int, k []byte, v uint64) *d {
+func (t *Tree) insert(q *d, i int, k []byte, v []byte) *d {
 	t.ver++
 	c := q.c
 	if i < c {
@@ -431,7 +431,7 @@ func (t *Tree) insert(q *d, i int, k []byte, v uint64) *d {
 
 // Last returns the last item of the tree in the key collating order, or
 // (zero-value, zero-value) if the tree is empty.
-func (t *Tree) Last() (k []byte, v uint64) {
+func (t *Tree) Last() (k []byte, v []byte) {
 	if q := t.last; q != nil {
 		q := &q.d[q.c-1]
 		k, v = q.k, q.v
@@ -444,7 +444,7 @@ func (t *Tree) Len() int {
 	return t.c
 }
 
-func (t *Tree) overflow(p *x, q *d, pi, i int, k []byte, v uint64) {
+func (t *Tree) overflow(p *x, q *d, pi, i int, k []byte, v []byte) {
 	t.ver++
 	l, r := p.siblings(pi)
 
@@ -525,7 +525,7 @@ func (t *Tree) SeekLast() (e *Enumerator, err error) {
 }
 
 // Set sets the value associated with k.
-func (t *Tree) Set(k []byte, v uint64) {
+func (t *Tree) Set(k []byte, v []byte) {
 	//dbg("--- PRE Set(%v, %v)\n%s", k, v, t.dump())
 	//defer func() {
 	//	dbg("--- POST\n%s\n====\n", t.dump())
@@ -591,11 +591,11 @@ func (t *Tree) Set(k []byte, v uint64) {
 // 	tree.Put(k, func([]byte, bool){ return v, true })
 //
 // modulo the differing return values.
-func (t *Tree) Put(k []byte, upd func(oldV uint64, exists bool) (newV uint64, write bool)) (oldV uint64, written bool) {
+func (t *Tree) Put(k []byte, upd func(oldV []byte, exists bool) (newV []byte, write bool)) (oldV []byte, written bool) {
 	pi := -1
 	var p *x
 	q := t.r
-	var newV uint64
+	var newV []byte
 	if q == nil {
 		// new KV pair in empty tree
 		newV, written = upd(newV, false)
@@ -658,7 +658,7 @@ func (t *Tree) Put(k []byte, upd func(oldV uint64, exists bool) (newV uint64, wr
 	}
 }
 
-func (t *Tree) split(p *x, q *d, pi, i int, k []byte, v uint64) {
+func (t *Tree) split(p *x, q *d, pi, i int, k []byte, v []byte) {
 	t.ver++
 	r := btDPool.Get().(*d)
 	if q.n != nil {
@@ -804,7 +804,7 @@ func (e *Enumerator) Close() {
 // Next returns the currently enumerated item, if it exists and moves to the
 // next item in the key collation order. If there is no item to return, err ==
 // io.EOF is returned.
-func (e *Enumerator) Next() (k []byte, v uint64, err error) {
+func (e *Enumerator) Next() (k []byte, v []byte, err error) {
 	if err = e.err; err != nil {
 		return
 	}
@@ -852,7 +852,7 @@ func (e *Enumerator) next() error {
 // Prev returns the currently enumerated item, if it exists and moves to the
 // previous item in the key collation order. If there is no item to return, err
 // == io.EOF is returned.
-func (e *Enumerator) Prev() (k []byte, v uint64, err error) {
+func (e *Enumerator) Prev() (k []byte, v []byte, err error) {
 	if err = e.err; err != nil {
 		return
 	}
