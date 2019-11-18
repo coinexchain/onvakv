@@ -1,4 +1,4 @@
-package nvtree
+package nvtreemap
 
 import (
 	"bytes"
@@ -29,11 +29,12 @@ const (
 )
 
 type Iterator interface {
-    Valid() bool
-    Next()
-    Key() []byte
-    Value() uint64
-    Close()
+	Domain() (start []byte, end []byte)
+	Valid() bool
+	Next()
+	Key() []byte
+	Value() uint64
+	Close()
 }
 
 // Non-volatile tree
@@ -44,15 +45,24 @@ type NVTree interface {
 	BeginWrite()
 	// end the write phase, and mark the corresponding height
 	EndWrite(height int64)
-	// get forward/backward iterators, when it is NOT in write phase
-	Iterator(start []byte) Iterator
-	ReverseIterator(start []byte) Iterator
-	// query the KV-pair, when it is NOT in write phase
+	// Iterator over a domain of keys in ascending order. End is exclusive.
+	// Start must be less than end, or the Iterator is invalid.
+	// Iterator must be closed by caller.
+	// To iterate over entire domain, use store.Iterator(nil, nil)
+	// Can NOT be used in in write phase
+	Iterator(start, end []byte) Iterator
+	// Iterator over a domain of keys in descending order. End is exclusive.
+	// Start must be less than end, or the Iterator is invalid.
+	// Iterator must be closed by caller.
+	// Can NOT be used in in write phase
+	ReverseIterator(start, end []byte) Iterator
+	// Query the KV-pair, when it is NOT in write phase. Panics on nil key.
 	// Get can be invoked from many goroutines concurrently
 	Get(k []byte) uint64
-	// update the KV store, when it is in write phase
+	// Set sets the key. Panics on nil key.
 	// Set and Delete can be invoked from only one goroutine
 	Set(k []byte, v uint64)
+	// Delete deletes the key. Panics on nil key.
 	Delete(k []byte)
 }
 
@@ -68,6 +78,10 @@ type NVTreeLevelDB struct {
 
 type NVTreeLevelDBIter struct {
 	iter      dbm.Iterator
+}
+func (iter *NVTreeLevelDBIter) Domain() (start []byte, end []byte) {
+	start, end = iter.iter.Domain()
+	return
 }
 func (iter *NVTreeLevelDBIter) Valid() bool {
 	return iter.iter.Valid()
@@ -108,7 +122,7 @@ func (tree *NVTreeLevelDB) EndWrite(_ int64) {
 	tree.mtx.Unlock()
 }
 
-func (tree *NVTreeLevelDB) Iterator(start []byte) Iterator {
+func (tree *NVTreeLevelDB) Iterator(start, end []byte) Iterator {
 	if tree.isWriting {
 		panic("tree.isWriting cannot be true! bug here...")
 	}
@@ -116,7 +130,7 @@ func (tree *NVTreeLevelDB) Iterator(start []byte) Iterator {
 	return &NVTreeLevelDBIter{iter:tree.db.Iterator(start, nil)}
 }
 
-func (tree *NVTreeLevelDB) ReverseIterator(start []byte) Iterator {
+func (tree *NVTreeLevelDB) ReverseIterator(start, end []byte) Iterator {
 	if tree.isWriting {
 		panic("tree.isWriting cannot be true! bug here...")
 	}
@@ -153,12 +167,16 @@ func (tree *NVTreeLevelDB) Delete(k []byte) {
 
 type ForwardIterMem struct {
 	enumerator *b.Enumerator
+	start      []byte
+	end        []byte
 	key        []byte
 	value      uint64
 	err        error
 }
 type BackwardIterMem struct {
 	enumerator *b.Enumerator
+	start      []byte
+	end        []byte
 	key        []byte
 	value      uint64
 	err        error
@@ -166,11 +184,19 @@ type BackwardIterMem struct {
 var _ Iterator = (*ForwardIterMem)(nil)
 var _ Iterator = (*BackwardIterMem)(nil)
 
+func (iter *ForwardIterMem) Domain() ([]byte, []byte) {
+	return iter.start, iter.end
+}
 func (iter *ForwardIterMem) Valid() bool {
 	return iter.err == nil
 }
 func (iter *ForwardIterMem) Next() {
-	iter.key, iter.value, iter.err = iter.enumerator.Next()
+	if iter.err != nil {
+		iter.key, iter.value, iter.err = iter.enumerator.Next()
+	}
+	if bytes.Compare(iter.key, iter.end) >= 0 {
+		iter.err = io.EOF
+	}
 }
 func (iter *ForwardIterMem) Key() []byte {
 	return iter.key
@@ -182,11 +208,19 @@ func (iter *ForwardIterMem) Close() {
 	iter.enumerator.Close()
 }
 
+func (iter *BackwardIterMem) Domain() ([]byte, []byte) {
+	return iter.start, iter.end
+}
 func (iter *BackwardIterMem) Valid() bool {
 	return iter.err == nil
 }
 func (iter *BackwardIterMem) Next() {
-	iter.key, iter.value, iter.err = iter.enumerator.Prev()
+	if iter.err != nil {
+		iter.key, iter.value, iter.err = iter.enumerator.Prev()
+	}
+	if bytes.Compare(iter.key, iter.start) < 0 {
+		iter.err = io.EOF
+	}
 }
 func (iter *BackwardIterMem) Key() []byte {
 	return iter.key
@@ -319,21 +353,27 @@ func (tree *NVTreeMem) Delete(k []byte) {
 	tree.bt.Delete(k)
 }
 
-func (tree *NVTreeMem) Iterator(start []byte) Iterator {
-	iter := &ForwardIterMem{}
+func (tree *NVTreeMem) Iterator(start, end []byte) Iterator {
+	iter := &ForwardIterMem{start:start, end:end}
+	if bytes.Compare(start, end) >= 0 {
+		iter.err = io.EOF
+		return iter
+	}
 	iter.enumerator, _ = tree.bt.Seek(start)
-	iter.Next()
+	iter.Next() //fill key, value, err
 	return iter
 }
 
-func (tree *NVTreeMem) ReverseIterator(start []byte) Iterator {
-	var ok bool
-	iter := &BackwardIterMem{}
-	iter.enumerator, ok = tree.bt.Seek(start)
-	if !ok { //now iter.enumerator > k
-		iter.enumerator.Prev()
+func (tree *NVTreeMem) ReverseIterator(start, end []byte) Iterator {
+	iter := &BackwardIterMem{start:start, end:end}
+	if bytes.Compare(start, end) >= 0 {
+		iter.err = io.EOF
+		return iter
 	}
-	iter.Next()
+	iter.enumerator, _ = tree.bt.Seek(end)
+	//now iter.enumerator >= k, we want end is exclusive
+	iter.enumerator.Prev()
+	iter.Next() //fill key, value, err
 	return iter
 }
 
