@@ -95,6 +95,7 @@ type (
 		last  *d
 		r     interface{}
 		ver   int64
+		//buf   []byte
 	}
 
 	xe struct { // x element
@@ -523,6 +524,21 @@ func (t *Tree) SeekLast() (e *Enumerator, err error) {
 
 	return btEPool.get(nil, true, q.c-1, q.d[q.c-1].k, q, t, t.ver), nil
 }
+
+// // Set sets the value associated with k safely, i.e., k can be changed by caller later
+// func (t *Tree) SafeSet(k []byte, v uint64) {
+// 	t.buf = append(t.buf, k...) //make a copy
+// 	t.Put(t.buf, func(oldV uint64, exists bool) (newV uint64, write bool) {
+// 		write = true
+// 		newV = v
+// 		if exists { // t.buf is not used, make it ready for reuse
+// 			t.buf = t.buf[:0]
+// 		} else { // t.buf is used in some place of the tree, re-allocate a new buf
+// 			t.buf = []byte{}
+// 		}
+// 		return
+// 	})
+// }
 
 // Set sets the value associated with k.
 func (t *Tree) Set(k []byte, v uint64) {
