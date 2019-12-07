@@ -1,4 +1,5 @@
-package nvtreemap
+package indextree
+//TODO prune old index
 
 import (
 	"bytes"

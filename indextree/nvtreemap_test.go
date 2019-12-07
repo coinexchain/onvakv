@@ -1,4 +1,4 @@
-package nvtreemap
+package indextree
 
 import (
 	"fmt"
