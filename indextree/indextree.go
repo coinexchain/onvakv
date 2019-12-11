@@ -1,5 +1,4 @@
 package indextree
-//TODO prune old index
 
 import (
 	"bytes"
@@ -17,7 +16,8 @@ import (
 	"github.com/mmcloughlin/meow"
 	dbm "github.com/tendermint/tm-db"
 
-	"github.com/coinexchain/onvakv/nvtreemap/b"
+	"github.com/coinexchain/onvakv/indextree/b"
+	"github.com/coinexchain/onvakv/types"
 )
 
 // Operations to KVFileLog
@@ -45,46 +45,10 @@ func getOpStr(op byte) string {
 	}
 }
 
-type Iterator interface {
-	Domain() (start []byte, end []byte)
-	Valid() bool
-	Next()
-	Key() []byte
-	Value() uint64
-	Close()
-}
-
-// Non-volatile tree
-type NVTree interface {
-	// initialize the internal data structure
-	Init(dirname string, repFn func(string)) error
-	// begin the write phase, during which no reading is permitted
-	BeginWrite()
-	// end the write phase, and mark the corresponding height
-	EndWrite(height int64)
-	// Iterator over a domain of keys in ascending order. End is exclusive.
-	// Start must be less than end, or the Iterator is invalid.
-	// Iterator must be closed by caller.
-	// To iterate over entire domain, use store.Iterator(nil, nil)
-	// Can NOT be used in in write phase
-	Iterator(start, end []byte) Iterator
-	// Iterator over a domain of keys in descending order. End is exclusive.
-	// Start must be less than end, or the Iterator is invalid.
-	// Iterator must be closed by caller.
-	// Can NOT be used in in write phase
-	ReverseIterator(start, end []byte) Iterator
-	// Query the KV-pair, when it is NOT in write phase. Panics on nil key.
-	// Get can be invoked from many goroutines concurrently
-	Get(k []byte) uint64
-	// Set sets the key. Panics on nil key.
-	// Set and Delete can be invoked from only one goroutine
-	Set(k []byte, v uint64)
-	// Delete deletes the key. Panics on nil key.
-	Delete(k []byte)
-}
+type Iterator = types.Iterator
 
 // ============================
-// Here we implement NVTree with dbm.GoLevelDB
+// Here we implement IndexTree with dbm.GoLevelDB
 
 type NVTreeLevelDB struct {
 	db        *dbm.GoLevelDB
@@ -92,6 +56,8 @@ type NVTreeLevelDB struct {
 	mtx       sync.Mutex
 	isWriting bool
 }
+
+var _ types.IndexTree = (*NVTreeLevelDB)(nil)
 
 type NVTreeLevelDBIter struct {
 	iter      dbm.Iterator
@@ -116,7 +82,7 @@ func (iter *NVTreeLevelDBIter) Close() {
 	iter.iter.Close()
 }
 
-var _ NVTree = (*NVTreeLevelDB)(nil)
+var _ types.IndexTree = (*NVTreeLevelDB)(nil)
 
 func (tree *NVTreeLevelDB) Init(dirname string, _ func(string)) (err error) {
 	tree.db, err = dbm.NewGoLevelDB("tree", dirname)
@@ -156,15 +122,15 @@ func (tree *NVTreeLevelDB) ReverseIterator(start, end []byte) Iterator {
 	return &NVTreeLevelDBIter{iter:tree.db.ReverseIterator(start, end)}
 }
 
-func (tree *NVTreeLevelDB) Get(k []byte) uint64 {
+func (tree *NVTreeLevelDB) Get(k []byte) (uint64, bool) {
 	if tree.isWriting {
 		panic("tree.isWriting cannot be true! bug here...")
 	}
 	res := tree.db.Get(k)
 	if len(res) == 0 {
-		return 0
+		return 0, false
 	}
-	return binary.LittleEndian.Uint64(res)
+	return binary.LittleEndian.Uint64(res), true
 }
 
 func (tree *NVTreeLevelDB) Set(k []byte, v uint64) {
@@ -185,7 +151,7 @@ func (tree *NVTreeLevelDB) Delete(k []byte) {
 
 
 // ============================
-// Here we implement NVTree with an in-memory B-Tree and a file log
+// Here we implement IndexTree with an in-memory B-Tree and a file log
 
 type ForwardIterMem struct {
 	enumerator *b.Enumerator
@@ -264,7 +230,7 @@ type NVTreeMem struct {
 	prevEndKey []byte // The last key of DUPLOG which was written out
 	numUpdate  int64
 }
-var _ NVTree = (*NVTreeMem)(nil)
+var _ types.IndexTree = (*NVTreeMem)(nil)
 
 func NewNVTreeMem(entryCountLimit int) *NVTreeMem {
 	btree := b.TreeNew(bytes.Compare)
@@ -365,15 +331,11 @@ func (tree *NVTreeMem) Set(k []byte, v uint64) {
 	tree.numUpdate++
 }
 
-func (tree *NVTreeMem) Get(k []byte) uint64 {
+func (tree *NVTreeMem) Get(k []byte) (uint64, bool) {
 	if tree.isWriting {
 		panic("tree.isWriting cannot be true! bug here...")
 	}
-	v, ok := tree.bt.Get(k)
-	if !ok {
-		return 0
-	}
-	return v
+	return tree.bt.Get(k)
 }
 
 func (tree *NVTreeMem) Delete(k []byte) {

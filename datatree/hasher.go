@@ -2,6 +2,7 @@ package datatree
 
 import (
 	"crypto/sha256"
+	"sync"
 )
 
 const (
@@ -15,8 +16,15 @@ func hash(in []byte) []byte {
 	return h.Sum(nil)
 }
 
+func hash2(a,b []byte) []byte {
+	h := sha256.New()
+	h.Write(a)
+	h.Write(b)
+	return h.Sum(nil)
+}
+
 type hashJob struct {
-	target  *[]byte
+	target  []byte
 	srcA    []byte
 	srcB    []byte
 }
@@ -25,7 +33,7 @@ func (job hashJob) run() {
 	h := sha256.New()
 	h.Write(job.srcA)
 	h.Write(job.srcB)
-	*job.target = h.Sum(nil)
+	copy(job.target, h.Sum(nil))
 }
 
 
@@ -34,7 +42,7 @@ type Hasher struct {
 	wg    sync.WaitGroup
 }
 
-func (h *Hasher) Add(target *[]byte, srcA []byte, srcB []byte) {
+func (h *Hasher) Add(target []byte, srcA []byte, srcB []byte) {
 	h.jobs = append(h.jobs, hashJob{target, srcA, srcB})
 }
 
@@ -44,12 +52,15 @@ func (h *Hasher) Run() {
 			job.run()
 		}
 	}
-	strip := MinimumJobsInGoroutine
-	if strip * MaximumGoroutines < len(h.jobs) {
-		strip = len(h.jobs)/MaximumGoroutines
+	stripe := MinimumJobsInGoroutine
+	if stripe * MaximumGoroutines < len(h.jobs) {
+		stripe = len(h.jobs)/MaximumGoroutines
+		if len(h.jobs)%MaximumGoroutines != 0 {
+			stripe++
+		}
 	}
-	for start:=0; start<len(h.jobs); start+=strip {
-		end = start+strip
+	for start:=0; start<len(h.jobs); start+=stripe {
+		end := start+stripe
 		if end > len(h.jobs) {
 			end = len(h.jobs)
 		}
@@ -58,8 +69,8 @@ func (h *Hasher) Run() {
 			for _, job := range h.jobs[start:end] {
 				job.run()
 			}
-			wg.Done()
-		}
+			h.wg.Done()
+		}()
 	}
 	h.wg.Wait()
 }

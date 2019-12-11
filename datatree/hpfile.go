@@ -24,7 +24,7 @@ func NewHPFile(blockSize int, dirName string) (HPFile, error) {
 	}
 	files, err := ioutil.ReadDir(dirName)
 	if err != nil {
-		return nil, err
+		return res, err
 	}
 	var idList []int
 	for _, file := range files {
@@ -33,11 +33,11 @@ func NewHPFile(blockSize int, dirName string) (HPFile, error) {
 		}
 		twoParts := strings.Split(file.Name(), "-")
 		if len(twoParts) != 2 {
-			return nil, fmt.Errorf("%s does not match the pattern 'FileId-BlockSize'", file.Name)
+			return res, fmt.Errorf("%s does not match the pattern 'FileId-BlockSize'", file.Name)
 		}
 		id, err := strconv.ParseInt(twoParts[0], 10, 31)
 		if err != nil {
-			return nil, err
+			return res, err
 		}
 		if res.largestID < int(id) {
 			res.largestID = int(id)
@@ -45,7 +45,7 @@ func NewHPFile(blockSize int, dirName string) (HPFile, error) {
 		idList = append(idList, int(id))
 		size, err := strconv.ParseInt(twoParts[1], 10, 31)
 		if int64(blockSize) != size {
-			return nil, fmt.Errorf("Invalid Size! %d!=%d", size, blockSize)
+			return res, fmt.Errorf("Invalid Size! %d!=%d", size, blockSize)
 		}
 	}
 	for _, id := range idList {
@@ -57,7 +57,7 @@ func NewHPFile(blockSize int, dirName string) (HPFile, error) {
 			res.fileMap[id], err = os.Open(fname)
 		}
 		if err != nil {
-			return nil, err
+			return res, err
 		}
 	}
 	return res, nil
@@ -80,7 +80,7 @@ func (hpf *HPFile) Truncate(size int64) error {
 			return err
 		}
 		fname := fmt.Sprintf("%s/%d-%d", hpf.dirName, hpf.largestID, hpf.blockSize)
-		err := os.Remove(fname)
+		err = os.Remove(fname)
 		if err != nil {
 			return err
 		}
@@ -133,18 +133,18 @@ func (hpf *HPFile) Append(b []byte) (int64, error) {
 		fname := fmt.Sprintf("%s/%d-%d", hpf.dirName, hpf.largestID, hpf.blockSize)
 		f, err = os.OpenFile(fname, os.O_RDWR|os.O_CREATE, 0700)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if extra != 0 {
 			buf := make([]byte, extra)
 			_, err = f.Write(buf)
 			if err != nil {
-				return err
+				return 0, err
 			}
 		}
 		hpf.fileMap[hpf.largestID] = f
 	}
-	return hpf.largestID * int64(hpf.blockSize) + size, nil
+	return int64(hpf.largestID * hpf.blockSize) + size, nil
 }
 
 func (hpf *HPFile) PruneHead(off int64) error {
