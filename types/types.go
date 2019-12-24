@@ -22,9 +22,9 @@ type IndexTree interface {
 	// initialize the internal data structure
 	Init(dirname string, repFn func(string)) error
 	// begin the write phase, during which no reading is permitted
-	BeginWrite()
+	BeginWrite(height int64)
 	// end the write phase, and mark the corresponding height
-	EndWrite(height int64)
+	EndWrite()
 	// Iterator over a domain of keys in ascending order. End is exclusive.
 	// Start must be less than end, or the Iterator is invalid.
 	// Iterator must be closed by caller.

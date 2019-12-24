@@ -204,20 +204,16 @@ func (okv *OnvaKV) prepareTasks(tasks []UpdateTask) {
 	wg.Wait()
 }
 
-func (okv *OnvaKV) finishTasks(tasks []UpdateTask) {
-	okv.prepareTasks(tasks)
-	okv.idxTree.BeginWrite()
-	for _, task := range tasks {
-		okv.runTask(task)
-	}
-}
-
 func (okv *OnvaKV) numOfKeptEntries() int64 {
 	return okv.meta.GetMaxSerialNum() - okv.meta.GetOldestActiveTwigID() * datatree.LeafCountInTwig
 }
 
 func (okv *OnvaKV) EndBlock(tasks []UpdateTask, height int64) {
-	okv.finishTasks(tasks)
+	okv.prepareTasks(tasks)
+	okv.idxTree.BeginWrite(height)
+	for _, task := range tasks {
+		okv.runTask(task)
+	}
 	okv.meta.SetCurrHeight(height)
 	for okv.numOfKeptEntries() > okv.meta.GetActiveEntryCount()*ActiveEntriesToKeptEntriesRation &&
 	okv.meta.GetActiveEntryCount() > StartReapThres {
@@ -233,7 +229,7 @@ func (okv *OnvaKV) EndBlock(tasks []UpdateTask, height int64) {
 		okv.datTree.DeleteActiveTwig(twigID)
 		okv.meta.IncrOldestActiveTwigID()
 	}
-	okv.idxTree.EndWrite(height)
+	okv.idxTree.EndWrite()
 	okv.datTree.EndBlock()
 
 	eS, tS := okv.datTree.GetFileSizes()
