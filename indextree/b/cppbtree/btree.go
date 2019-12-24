@@ -33,6 +33,13 @@ func (tree *Tree) Close() {
 	C.cppbtree_delete(tree.ptr);
 }
 
+func (tree *Tree) PutNewAndGetOld(key []byte, newV uint64) (uint64, bool) {
+	keydata := (*C.char)(unsafe.Pointer(&key[0]))
+	var ok C.int
+	oldV := C.cppbtree_put_new_and_get_old(tree.ptr, keydata, C.int(len(key)), C.ulonglong(newV), &ok)
+	return uint64(oldV), ok!=0
+}
+
 func (tree *Tree) Set(key []byte, value uint64) {
 	keydata := (*C.char)(unsafe.Pointer(&key[0]))
 	C.cppbtree_set(tree.ptr, keydata, C.int(len(key)), C.ulonglong(value))

@@ -3,6 +3,7 @@ package indextree
 import (
 	"bytes"
 	"io"
+	"math"
 	"sync"
 	"encoding/binary"
 
@@ -113,21 +114,19 @@ func (tree *NVTreeMem) Init(dirname string, repFn func(string)) (err error) {
 	}
 	iter := tree.rocksdb.Iterator([]byte{}, []byte(nil))
 	defer iter.Close()
-	lastKey := []byte{}
 	for iter.Valid() {
 		k := iter.Key()
 		v := iter.Value()
 		if len(k) < 8 {
 			panic("key length is too short")
 		}
-		if len(v) != 8 {
-			panic("value length is not 8")
+		if len(v) != 8 && len(v) != 0 {
+			panic("value length is not 8 or 0")
 		}
-		k = k[:len(k)-8]
-		if !bytes.Equal(lastKey, k) {
-			tree.bt.Set(k, binary.BigEndian.Uint64(v))
+		if bytes.Equal(k[len(k)-8:], []byte{255,255,255,255,255,255,255,255}) {
+			//write the up-to-date value
+			tree.bt.Set(k[:len(k)-8], binary.BigEndian.Uint64(v))
 		}
-		lastKey = k
 		iter.Next()
 	}
 	return nil
@@ -157,13 +156,23 @@ func (tree *NVTreeMem) Set(k []byte, v uint64) {
 	if !tree.isWriting {
 		panic("tree.isWriting must be true! bug here...")
 	}
-	tree.bt.Set(k, v)
-	var buf [8]byte
-	binary.BigEndian.PutUint64(buf[:], v)
+	oldVExists := false
+	oldV, oldVExists := tree.bt.PutNewAndGetOld(k, v)
+
 	newK := make([]byte, 0, len(k)+8)
 	newK = append(newK, k...)
 	newK = append(newK, tree.currHeight[:]...)
-	tree.batch.Set(newK, buf[:])
+	var buf [8]byte
+	if oldVExists {
+		binary.BigEndian.PutUint64(buf[:], oldV)
+		tree.batch.Set(newK, buf[:]) // write a historical value
+	} else {
+		tree.batch.Set(newK, []byte{}) // write a historical empty value
+	}
+
+	binary.BigEndian.PutUint64(buf[:], v)
+	binary.BigEndian.PutUint64(newK[len(newK)-8:], math.MaxUint64)
+	tree.batch.Set(newK, buf[:]) // write the up-to-date value
 }
 
 func (tree *NVTreeMem) Get(k []byte) (uint64, bool) {
@@ -175,12 +184,53 @@ func (tree *NVTreeMem) Get(k []byte) (uint64, bool) {
 	return tree.bt.Get(k)
 }
 
+func (tree *NVTreeMem) GetAtHeight(k []byte, height uint64) (res uint64, ok bool) {
+	if height <= tree.rocksdb.GetPruneHeight() {
+		return 0, false
+	}
+	newK := make([]byte, len(k)+8)
+	copy(newK, k)
+	binary.BigEndian.PutUint64(newK[len(k):], height+1)
+	iter := tree.rocksdb.Iterator(newK, nil)
+	defer iter.Close()
+	if !iter.Valid() {
+		return 0, false
+	}
+
+	binary.BigEndian.PutUint64(newK[len(k):], math.MaxUint64)
+	if bytes.Compare(iter.Key(), newK) > 0 {
+		return 0, false
+	}
+
+	v := iter.Value()
+	if len(v) == 0 {
+		ok = false
+	} else {
+		ok = true
+		res = binary.BigEndian.Uint64(v)
+	}
+	return
+}
+
 func (tree *NVTreeMem) Delete(k []byte) {
 	if !tree.isWriting {
 		panic("tree.isWriting must be true! bug here...")
 	}
+	oldV, ok := tree.bt.Get(k)
+	if !ok {
+		panic("deleting a nonexistent key! bug here...")
+	}
 	tree.bt.Delete(k)
-	tree.batch.Set(k, []byte{})
+
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], oldV)
+	newK := make([]byte, 0, len(k)+8)
+	newK = append(newK, k...)
+	newK = append(newK, tree.currHeight[:]...)
+	tree.batch.Set(newK, buf[:]) // write a historical value
+
+	binary.BigEndian.PutUint64(newK[len(newK)-8:], math.MaxUint64)
+	tree.batch.Delete(newK) // delete the up-to-date value
 }
 
 func (tree *NVTreeMem) Iterator(start, end []byte) Iterator {

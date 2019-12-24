@@ -80,7 +80,13 @@ func NewRocksDBWithOptions(name string, dir string, opts *gorocksdb.Options) (*R
 }
 
 func (db *RocksDB) SetPruneHeight(h uint64) {
-	db.filter.pruneHeight = h
+	if db.filter.pruneHeight < h {
+		db.filter.pruneHeight = h
+	}
+}
+
+func (db *RocksDB) GetPruneHeight() uint64 {
+	return db.filter.pruneHeight
 }
 
 // Implements DB.

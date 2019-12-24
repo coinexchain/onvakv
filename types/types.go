@@ -19,30 +19,14 @@ type Iterator interface {
 }
 
 type IndexTree interface {
-	// initialize the internal data structure
 	Init(dirname string, repFn func(string)) error
-	// begin the write phase, during which no reading is permitted
 	BeginWrite(height int64)
-	// end the write phase, and mark the corresponding height
 	EndWrite()
-	// Iterator over a domain of keys in ascending order. End is exclusive.
-	// Start must be less than end, or the Iterator is invalid.
-	// Iterator must be closed by caller.
-	// To iterate over entire domain, use store.Iterator(nil, nil)
-	// Can NOT be used in in write phase
 	Iterator(start, end []byte) Iterator
-	// Iterator over a domain of keys in descending order. End is exclusive.
-	// Start must be less than end, or the Iterator is invalid.
-	// Iterator must be closed by caller.
-	// Can NOT be used in in write phase
 	ReverseIterator(start, end []byte) Iterator
-	// Query the KV-pair, when it is NOT in write phase. Panics on nil key.
-	// Get can be invoked from many goroutines concurrently
 	Get(k []byte) (uint64, bool)
-	// Set sets the key. Panics on nil key.
-	// Set and Delete can be invoked from only one goroutine
+	GetAtHeight(k []byte, height uint64) (uint64, bool)
 	Set(k []byte, v uint64)
-	// Delete deletes the key. Panics on nil key.
 	Delete(k []byte)
 }
 

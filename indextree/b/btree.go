@@ -597,6 +597,14 @@ func (t *Tree) Set(k []byte, v uint64) {
 	}
 }
 
+func (t *Tree) PutNewAndGetOld(k []byte, newV uint64) (oldV uint64, oldVExists bool) {
+	oldV, _ = t.Put(k, func(oldV uint64, exists bool) (newV uint64, write bool) {
+		oldVExists = exists
+		return newV, true
+	})
+	return
+}
+
 // Put combines Get and Set in a more efficient way where the tree is walked
 // only once. The upd(ater) receives (old-value, true) if a KV pair for k
 // exists or (zero-value, false) otherwise. It can then return a (new-value,

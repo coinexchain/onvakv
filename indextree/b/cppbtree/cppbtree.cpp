@@ -13,6 +13,22 @@ void  cppbtree_delete(void* tree) {
 	delete bt;
 }
 
+unsigned long long cppbtree_put_new_and_get_old(void* tree, char* key, int key_len, unsigned long long value, int *ok) {
+	std::string keyStr(key, key_len);
+	BTree* bt = (BTree*)tree;
+	Iter iter = bt->find(keyStr); 
+	if (iter == bt->end()) {
+		(*bt)[keyStr] = value;
+		*ok = 0;
+		return 0;
+	} else {
+		unsigned long long old_value = iter->second;
+		iter->second = value;
+		*ok = 1;
+		return old_value;
+	}
+}
+
 void  cppbtree_set(void* tree, char* key, int key_len, unsigned long long value) {
 	std::string keyStr(key, key_len);
 	BTree* bt = (BTree*)tree;

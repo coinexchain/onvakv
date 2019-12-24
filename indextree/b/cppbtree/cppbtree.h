@@ -15,6 +15,8 @@ extern "C" {
 	void* cppbtree_new();
 	void  cppbtree_delete(void* tree);
 
+	unsigned long long cppbtree_put_new_and_get_old(void* tree, char* key, int key_len, unsigned long long value, int *ok);
+
 	void  cppbtree_set(void* tree, char* key, int key_len, unsigned long long value);
 	void  cppbtree_erase(void* tree, char* key, int key_len);
 	unsigned long long cppbtree_get(void* tree, char* key, int key_len, int* ok);
