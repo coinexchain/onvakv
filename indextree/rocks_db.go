@@ -11,6 +11,7 @@ import (
 	"github.com/tecbot/gorocksdb"
 )
 
+// We use rocksdb's customizable compact filter to prune old records
 type HeightCompactionFilter struct {
 	pruneHeight uint64
 }
@@ -19,6 +20,7 @@ func (f *HeightCompactionFilter) Name() string {
 	return "HeightPruneFilter"
 }
 
+// The last 8 bytes of keys are expiring height. If it is too small, we prune the record
 func (f *HeightCompactionFilter) Filter(level int, key, val []byte) (remove bool, newVal []byte) {
 	if len(key) < 8 {
 		return false, val
@@ -60,7 +62,7 @@ func NewRocksDB(name string, dir string) (*RocksDB, error) {
 func NewRocksDBWithOptions(name string, dir string, opts *gorocksdb.Options) (*RocksDB, error) {
 	dbPath := filepath.Join(dir, name+".db")
 	filter := HeightCompactionFilter{}
-	opts.SetCompactionFilter(&filter)
+	opts.SetCompactionFilter(&filter) // use a customized compaction filter
 	db, err := gorocksdb.OpenDb(opts, dbPath)
 	if err != nil {
 		return nil, err

@@ -17,12 +17,9 @@ const (
 
 type Iterator = types.Iterator
 
-
-// ============================
-// Here we implement IndexTree with an in-memory B-Tree and a file log
-
 type ForwardIterMem struct {
 	enumerator *b.Enumerator
+	tree       *NVTreeMem
 	start      []byte
 	end        []byte
 	key        []byte
@@ -31,6 +28,7 @@ type ForwardIterMem struct {
 }
 type BackwardIterMem struct {
 	enumerator *b.Enumerator
+	tree       *NVTreeMem
 	start      []byte
 	end        []byte
 	key        []byte
@@ -47,6 +45,9 @@ func (iter *ForwardIterMem) Valid() bool {
 	return iter.err == nil
 }
 func (iter *ForwardIterMem) Next() {
+	if iter.tree.isWriting {
+		panic("tree.isWriting cannot be true! bug here...")
+	}
 	if iter.err == nil {
 		iter.key, iter.value, iter.err = iter.enumerator.Next()
 		if bytes.Compare(iter.key, iter.end) >= 0 {
@@ -61,6 +62,7 @@ func (iter *ForwardIterMem) Value() uint64 {
 	return iter.value
 }
 func (iter *ForwardIterMem) Close() {
+	iter.tree.mtx.RUnlock()
 	iter.enumerator.Close()
 }
 
@@ -71,6 +73,9 @@ func (iter *BackwardIterMem) Valid() bool {
 	return iter.err == nil
 }
 func (iter *BackwardIterMem) Next() {
+	if iter.tree.isWriting {
+		panic("tree.isWriting cannot be true! bug here...")
+	}
 	if iter.err == nil {
 		iter.key, iter.value, iter.err = iter.enumerator.Prev()
 		if bytes.Compare(iter.key, iter.start) < 0 {
@@ -85,10 +90,19 @@ func (iter *BackwardIterMem) Value() uint64 {
 	return iter.value
 }
 func (iter *BackwardIterMem) Close() {
+	iter.tree.mtx.RUnlock()
 	iter.enumerator.Close()
 }
 
-//------------
+/* ============================
+ Here we implement IndexTree with an in-memory B-Tree and a on-disk RocksDB
+ The B-Tree contains only the latest key-position records, while the RocksDB
+ contains several versions of positions for each key. The keys in RocksDB have
+ two parts: the original key and 64-bit height. The height means the key-position
+ record expires (get invalid) at this head. When the height is math.MaxUint64,
+ the key-position record is up-to-date, i.e., not expired.
+*/
+
 
 type NVTreeMem struct {
 	mtx        sync.RWMutex
@@ -107,8 +121,10 @@ func NewNVTreeMem(entryCountLimit int) *NVTreeMem {
 	}
 }
 
+// Load the RocksDB and use its up-to-date records to initialize the in-memory B-Tree.
+// RocksDB's historical records are ignored.
 func (tree *NVTreeMem) Init(dirname string, repFn func(string)) (err error) {
-	tree.rocksdb, err = NewRocksDB("itree", dirname)
+	tree.rocksdb, err = NewRocksDB("idxtree", dirname)
 	if err != nil {
 		return err
 	}
@@ -132,6 +148,7 @@ func (tree *NVTreeMem) Init(dirname string, repFn func(string)) (err error) {
 	return nil
 }
 
+// Begin the write phase of block execution
 func (tree *NVTreeMem) BeginWrite(currHeight int64) {
 	tree.mtx.Lock()
 	if tree.isWriting {
@@ -142,6 +159,7 @@ func (tree *NVTreeMem) BeginWrite(currHeight int64) {
 	binary.BigEndian.PutUint64(tree.currHeight[:], uint64(currHeight))
 }
 
+// End the write phase of block execution
 func (tree *NVTreeMem) EndWrite() {
 	if !tree.isWriting {
 		panic("tree.isWriting cannot be false! bug here...")
@@ -149,14 +167,16 @@ func (tree *NVTreeMem) EndWrite() {
 	tree.isWriting = false
 	tree.batch.WriteSync()
 	tree.batch.Close()
+	tree.batch = nil
 	tree.mtx.Unlock()
 }
 
+// Update or insert a key-position record to B-Tree and RocksDB
+// Write the historical record to RocksDB
 func (tree *NVTreeMem) Set(k []byte, v uint64) {
 	if !tree.isWriting {
 		panic("tree.isWriting must be true! bug here...")
 	}
-	oldVExists := false
 	oldV, oldVExists := tree.bt.PutNewAndGetOld(k, v)
 
 	newK := make([]byte, 0, len(k)+8)
@@ -175,6 +195,7 @@ func (tree *NVTreeMem) Set(k []byte, v uint64) {
 	tree.batch.Set(newK, buf[:]) // write the up-to-date value
 }
 
+// Get the up-to-date position of k, from the B-Tree
 func (tree *NVTreeMem) Get(k []byte) (uint64, bool) {
 	if tree.isWriting {
 		panic("tree.isWriting cannot be true! bug here...")
@@ -184,7 +205,8 @@ func (tree *NVTreeMem) Get(k []byte) (uint64, bool) {
 	return tree.bt.Get(k)
 }
 
-func (tree *NVTreeMem) GetAtHeight(k []byte, height uint64) (res uint64, ok bool) {
+// Get the position of k, at the specified height.
+func (tree *NVTreeMem) GetAtHeight(k []byte, height uint64) (position uint64, ok bool) {
 	if height <= tree.rocksdb.GetPruneHeight() {
 		return 0, false
 	}
@@ -207,11 +229,13 @@ func (tree *NVTreeMem) GetAtHeight(k []byte, height uint64) (res uint64, ok bool
 		ok = false
 	} else {
 		ok = true
-		res = binary.BigEndian.Uint64(v)
+		position = binary.BigEndian.Uint64(v)
 	}
 	return
 }
 
+// Delete a key-position record in B-Tree and RocksDB
+// Write the historical record to RocksDB
 func (tree *NVTreeMem) Delete(k []byte) {
 	if !tree.isWriting {
 		panic("tree.isWriting must be true! bug here...")
@@ -233,8 +257,13 @@ func (tree *NVTreeMem) Delete(k []byte) {
 	tree.batch.Delete(newK) // delete the up-to-date value
 }
 
+// Create a forward iterator from the B-Tree
 func (tree *NVTreeMem) Iterator(start, end []byte) Iterator {
-	iter := &ForwardIterMem{start:start, end:end}
+	if tree.isWriting {
+		panic("tree.isWriting cannot be true! bug here...")
+	}
+	tree.mtx.RLock()
+	iter := &ForwardIterMem{tree:tree, start:start, end:end}
 	if bytes.Compare(start, end) >= 0 {
 		iter.err = io.EOF
 		return iter
@@ -244,8 +273,13 @@ func (tree *NVTreeMem) Iterator(start, end []byte) Iterator {
 	return iter
 }
 
+// Create a backward iterator from the B-Tree
 func (tree *NVTreeMem) ReverseIterator(start, end []byte) Iterator {
-	iter := &BackwardIterMem{start:start, end:end}
+	if tree.isWriting {
+		panic("tree.isWriting cannot be true! bug here...")
+	}
+	tree.mtx.RLock()
+	iter := &BackwardIterMem{tree:tree, start:start, end:end}
 	if bytes.Compare(start, end) >= 0 {
 		iter.err = io.EOF
 		return iter
@@ -257,6 +291,7 @@ func (tree *NVTreeMem) ReverseIterator(start, end []byte) Iterator {
 	return iter
 }
 
+// Set the prune height for historical record
 func (tree *NVTreeMem) SetPruneHeight(h uint64) {
 	tree.rocksdb.SetPruneHeight(h)
 }
