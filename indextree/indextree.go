@@ -99,7 +99,7 @@ func (iter *BackwardIterMem) Close() {
  The B-Tree contains only the latest key-position records, while the RocksDB
  contains several versions of positions for each key. The keys in RocksDB have
  two parts: the original key and 64-bit height. The height means the key-position
- record expires (get invalid) at this head. When the height is math.MaxUint64,
+ record expires (get invalid) at this height. When the height is math.MaxUint64,
  the key-position record is up-to-date, i.e., not expired.
 */
 
