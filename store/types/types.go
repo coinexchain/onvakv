@@ -8,7 +8,7 @@ type StoreKey interface {
 type Serializable interface {
 	ToBytes() []byte
 	FromBytes([]byte)
-	DeepCopy() Serializable
+	DeepCopy() interface{}
 }
 
 type ObjIterator interface {

@@ -38,7 +38,7 @@ func (root *OnvaRootStore) GetObj(key []byte, ptr *types.Serializable) {
 	obj, ok := root.cache[string(key)]
 	if ok {
 		reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(obj))
-		root.cache[string(key)] = obj.DeepCopy()
+		root.cache[string(key)] = obj.DeepCopy().(types.Serializable)
 	} else if bz := root.okv.Get(key); bz != nil {
 		(*ptr).FromBytes(bz)
 	} else {
