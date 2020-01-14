@@ -18,6 +18,15 @@ type Iterator interface {
 	Close()
 }
 
+type UpdateTask struct {
+	TaskKind  int
+	PrevEntry *Entry
+	CurrEntry *Entry
+	Key       []byte
+	Value     []byte
+}
+
+
 type IndexTree interface {
 	Init(dirname string, repFn func(string)) error
 	BeginWrite(height int64)
@@ -40,7 +49,7 @@ type DataTree interface {
 	TwigCanBePruned(twigID int64) bool
 	PruneTwigs(startID, endID int64) []byte
 	GetFileSizes() (int64, int64)
-	EndBlock()
+	EndBlock() []byte
 }
 
 type MetaDB interface {

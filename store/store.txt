@@ -1,0 +1,103 @@
+
+
+type KVStore interface {
+	// Get returns nil iff key doesn't exist. Panics on nil key.
+	Get(key []byte) []byte
+
+	// Has checks if a key exists. Panics on nil key.
+	Has(key []byte) bool
+
+	// Set sets the key. Panics on nil key or value.
+	Set(key, value []byte)
+
+	// Delete deletes the key. Panics on nil key.
+	Delete(key []byte)
+
+	// Iterator over a domain of keys in ascending order. End is exclusive.
+	// Start must be less than end, or the Iterator is invalid.
+	// Iterator must be closed by caller.
+	// To iterate over entire domain, use store.Iterator(nil, nil)
+	// CONTRACT: No writes may happen within a domain while an iterator exists over it.
+	// Exceptionally allowed for cachekv.Store, safe to write in the modules.
+	Iterator(start, end []byte) Iterator
+
+	// Iterator over a domain of keys in descending order. End is exclusive.
+	// Start must be less than end, or the Iterator is invalid.
+	// Iterator must be closed by caller.
+	// CONTRACT: No writes may happen within a domain while an iterator exists over it.
+	// Exceptionally allowed for cachekv.Store, safe to write in the modules.
+	ReverseIterator(start, end []byte) Iterator
+}
+
+type MultiStore interface {
+	// Cache wrap MultiStore.
+	// NOTE: Caller should probably not call .Write() on each, but
+	// call CacheMultiStore.Write().
+	CacheMultiStore() MultiStore
+
+	// Convenience for fetching substores.注意，这里使用Interface的指针来做选择器，而不是字符串
+	// If the store does not exist, panics.
+	GetKVStore(StoreKey) KVStore
+
+	// Writes operations to underlying KVStore
+	Write()
+
+	// TracingEnabled returns if tracing is enabled for the MultiStore.
+	TracingEnabled() bool
+
+	// SetTracer sets the tracer for the MultiStore that the underlying
+	// stores will utilize to trace operations. The modified MultiStore is
+	// returned.
+	SetTracer(w io.Writer) MultiStore
+
+	// SetTracingContext sets the tracing context for a MultiStore. It is
+	// implied that the caller should update the context when necessary between
+	// tracing operations. The modified MultiStore is returned.
+	SetTracingContext(TraceContext) MultiStore
+
+}
+
+
+// A non-cache MultiStore.
+type CommitMultiStore interface {
+	MultiStore
+
+	Commit() CommitID
+	LastCommitID() CommitID
+	SetPruning(PruningOptions)
+
+	// Mount a store of type using the given db.
+	// If db == nil, the new store will use the CommitMultiStore db.
+	MountStoreWithDB(key StoreKey, typ StoreType, db dbm.DB)
+
+	// Load the latest persisted version.  Called once after all
+	// calls to Mount*Store() are complete.
+	LoadLatestVersion() error
+
+}
+
+// StoreKey is a key used to index stores in a MultiStore.
+type StoreKey interface {
+	Name() string
+	String() string
+}
+
+// KVStoreKey is used for accessing substores.
+// Only the pointer value should ever be used - it functions as a capabilities key.
+type KVStoreKey struct {
+	name string
+}
+
+// TransientStoreKey is used for indexing transient stores in a MultiStore
+type TransientStoreKey struct {
+	name string
+}
+
+//KVStoreKey和TransientStoreKey都实现了StoreKey的接口
+
+//func (okv *OnvaKV) Get(k []byte) ([]byte, bool) {
+//func (okv *OnvaKV) PruneBeforeHeight(height int64) {
+//func (okv *OnvaKV) EndBlock(tasks []UpdateTask, height int64) {
+//func NewSetTask(k,v []byte) UpdateTask {
+//func NewDeleteTask(k []byte) UpdateTask {
+

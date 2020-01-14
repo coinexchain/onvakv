@@ -3,6 +3,8 @@ package onvakv
 import (
 	"sync"
 
+	dbm "github.com/tendermint/tm-db"
+
 	"github.com/coinexchain/onvakv/types"
 	"github.com/coinexchain/onvakv/datatree"
 )
@@ -29,9 +31,10 @@ func (okv *OnvaKV) PruneBeforeHeight(height int64) {
 }
 
 type OnvaKV struct {
-	meta    types.MetaDB
-	idxTree types.IndexTree
-	datTree types.DataTree
+	meta     types.MetaDB
+	idxTree  types.IndexTree
+	datTree  types.DataTree
+	rootHash []byte
 }
 
 const (
@@ -44,35 +47,31 @@ const (
 
 type Entry = types.Entry
 
-type UpdateTask struct {
-	taskKind  int
-	prevEntry *Entry
-	currEntry *Entry
-	key       []byte
-	value     []byte
-}
-
-func NewSetTask(k,v []byte) UpdateTask {
-	return UpdateTask{
-		taskKind: SET,
-		key:      k,
-		value:    v,
+func NewSetTask(k,v []byte) types.UpdateTask {
+	return types.UpdateTask{
+		TaskKind: SET,
+		Key:      k,
+		Value:    v,
 	}
 }
 
-func NewDeleteTask(k []byte) UpdateTask {
-	return UpdateTask{
-		taskKind: DELETE,
-		key:      k,
+func NewDeleteTask(k []byte) types.UpdateTask {
+	return types.UpdateTask{
+		TaskKind: DELETE,
+		Key:      k,
 	}
 }
 
-func (okv *OnvaKV) Get(k []byte) ([]byte, bool) {
+func (okv *OnvaKV) GetRootHash() []byte {
+	return append([]byte{}, okv.rootHash...)
+}
+
+func (okv *OnvaKV) Get(k []byte) []byte {
 	pos, ok := okv.idxTree.Get(k)
 	if !ok {
-		return nil, false
+		return nil
 	}
-	return okv.datTree.ReadEntry(pos).Value, true
+	return okv.datTree.ReadEntry(pos).Value
 }
 
 func (okv *OnvaKV) getEntry(k []byte) *Entry {
@@ -141,13 +140,13 @@ func (okv *OnvaKV) deleteEntry(prev *Entry, curr *Entry) {
 	okv.meta.DecrActiveEntryCount()
 }
 
-func (okv *OnvaKV) runTask(task UpdateTask) {
-	if task.taskKind == INSERT {
-		okv.insertEntry(task.prevEntry, task.key, task.value)
-	} else if task.taskKind == CHANGE {
-		okv.changeEntry(task.currEntry, task.value)
-	} else if task.taskKind == DELETE {
-		okv.deleteEntry(task.prevEntry, task.currEntry)
+func (okv *OnvaKV) runTask(task types.UpdateTask) {
+	if task.TaskKind == INSERT {
+		okv.insertEntry(task.PrevEntry, task.Key, task.Value)
+	} else if task.TaskKind == CHANGE {
+		okv.changeEntry(task.CurrEntry, task.Value)
+	} else if task.TaskKind == DELETE {
+		okv.deleteEntry(task.PrevEntry, task.CurrEntry)
 	} else {
 		panic("Invalid Task Kind")
 	}
@@ -158,28 +157,28 @@ const (
 	MaximumGoroutines = 128
 )
 
-func (okv *OnvaKV) prepareTask(task *UpdateTask) {
-	if task.taskKind == SET {
-		task.currEntry = okv.getEntry(task.key)
-		if task.currEntry == nil {
-			task.taskKind = INSERT
-			task.prevEntry = okv.getPrevEntry(task.key)
+func (okv *OnvaKV) prepareTask(task *types.UpdateTask) {
+	if task.TaskKind == SET {
+		task.CurrEntry = okv.getEntry(task.Key)
+		if task.CurrEntry == nil {
+			task.TaskKind = INSERT
+			task.PrevEntry = okv.getPrevEntry(task.Key)
 		} else {
-			task.taskKind = CHANGE
+			task.TaskKind = CHANGE
 		}
-	} else if task.taskKind == DELETE {
-		task.currEntry = okv.getEntry(task.key)
-		if task.currEntry == nil {
-			task.taskKind = NOP
+	} else if task.TaskKind == DELETE {
+		task.CurrEntry = okv.getEntry(task.Key)
+		if task.CurrEntry == nil {
+			task.TaskKind = NOP
 		} else {
-			task.prevEntry = okv.getPrevEntry(task.key)
+			task.PrevEntry = okv.getPrevEntry(task.Key)
 		}
 	} else {
 		panic("Invalid Task Kind")
 	}
 }
 
-func (okv *OnvaKV) prepareTasks(tasks []UpdateTask) {
+func (okv *OnvaKV) prepareTasks(tasks []types.UpdateTask) {
 	stripe := MinimumTasksInGoroutine
 	if stripe * MaximumGoroutines < len(tasks) {
 		stripe = len(tasks)/MaximumGoroutines
@@ -208,7 +207,7 @@ func (okv *OnvaKV) numOfKeptEntries() int64 {
 	return okv.meta.GetMaxSerialNum() - okv.meta.GetOldestActiveTwigID() * datatree.LeafCountInTwig
 }
 
-func (okv *OnvaKV) EndBlock(tasks []UpdateTask, height int64) {
+func (okv *OnvaKV) EndBlock(tasks []types.UpdateTask, height int64) {
 	okv.prepareTasks(tasks)
 	okv.idxTree.BeginWrite(height)
 	for _, task := range tasks {
@@ -230,10 +229,47 @@ func (okv *OnvaKV) EndBlock(tasks []UpdateTask, height int64) {
 		okv.meta.IncrOldestActiveTwigID()
 	}
 	okv.idxTree.EndWrite()
-	okv.datTree.EndBlock()
+	okv.rootHash = okv.datTree.EndBlock()
 
 	eS, tS := okv.datTree.GetFileSizes()
 	okv.meta.SetEntryFileSize(eS)
 	okv.meta.SetTwigMtFileSize(tS)
 }
+
+type OnvaIterator struct {
+	okv  *OnvaKV
+	iter types.Iterator
+}
+
+var _ dbm.Iterator = (*OnvaIterator)(nil)
+
+func (iter *OnvaIterator) Domain() (start []byte, end []byte) {
+	return iter.iter.Domain()
+}
+func (iter *OnvaIterator) Valid() bool {
+	return iter.iter.Valid()
+}
+func (iter *OnvaIterator) Next() {
+	iter.iter.Next()
+}
+func (iter *OnvaIterator) Key() []byte {
+	return iter.iter.Key()
+}
+func (iter *OnvaIterator) Value() []byte {
+	pos := iter.iter.Value()
+	return iter.okv.datTree.ReadEntry(pos).Value
+}
+func (iter *OnvaIterator) Close() {
+	iter.iter.Close()
+}
+
+func (okv *OnvaKV) Iterator(start, end []byte) dbm.Iterator {
+	return &OnvaIterator{okv: okv, iter: okv.idxTree.Iterator(start, end)}
+}
+
+func (okv *OnvaKV) ReverseIterator(start, end []byte) dbm.Iterator {
+	return &OnvaIterator{okv: okv, iter: okv.idxTree.ReverseIterator(start, end)}
+}
+
+
 
