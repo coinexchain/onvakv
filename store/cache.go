@@ -68,8 +68,8 @@ func (cs *CacheStore) GetObjForOverlay(key []byte, ptr *types.Serializable) (sta
 					(*ptr).FromBytes(bz)
 				} else {
 					obj := oldV.GetObj().(types.Serializable)
+					newV = b.NewValue(obj.DeepCopy())
 					reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(obj))
-					newV = b.NewValue(obj.ToBytes())
 					write = true
 				}
 				status = types.Hit

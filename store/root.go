@@ -10,6 +10,8 @@ import (
 	onvatypes "github.com/coinexchain/onvakv/types"
 )
 
+// TODO: add guard kv pairs
+
 const CacheSizeLimit = 1024*1024
 
 type OnvaRootStore struct {
@@ -19,6 +21,8 @@ type OnvaRootStore struct {
 	height    int64
 	storeKeys map[types.StoreKey]struct{}
 }
+
+var _ types.BaseStore = (*OnvaRootStore)(nil)
 
 func (root *OnvaRootStore) SetHeight(h int64) {
 	root.height = h
@@ -34,7 +38,7 @@ func (root *OnvaRootStore) GetObj(key []byte, ptr *types.Serializable) {
 	obj, ok := root.cache[string(key)]
 	if ok {
 		reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(obj))
-		delete(root.cache, string(key))
+		root.cache[string(key)] = obj.DeepCopy()
 	} else if bz := root.okv.Get(key); bz != nil {
 		(*ptr).FromBytes(bz)
 	} else {
@@ -122,3 +126,11 @@ func (iter *RootStoreIterator) ObjValue(ptr *types.Serializable) {
 func (iter *RootStoreIterator) Close() {
 	iter.iter.Close()
 }
+
+	//SetPruning(PruningOptions)
+	// Mount a store of type using the given db.
+	// If db == nil, the new store will use the CommitMultiStore db.
+	//MountStoreWithDB(key StoreKey, typ StoreType, db dbm.DB)
+	// Load the latest persisted version.  Called once after all
+	// calls to Mount*Store() are complete.
+	//LoadLatestVersion() error

@@ -8,6 +8,7 @@ type StoreKey interface {
 type Serializable interface {
 	ToBytes() []byte
 	FromBytes([]byte)
+	DeepCopy() Serializable
 }
 
 type ObjIterator interface {
@@ -61,20 +62,3 @@ type MultiStore interface {
 	SubStore(StoreKey) KObjStore
 	Cached() MultiStore
 }
-
-type RootStore interface {
-	BaseStore
-	Cached() MultiStore
-	SetHeight(int)
-
-	GetRootHash() []byte
-
-	//SetPruning(PruningOptions)
-	// Mount a store of type using the given db.
-	// If db == nil, the new store will use the CommitMultiStore db.
-	//MountStoreWithDB(key StoreKey, typ StoreType, db dbm.DB)
-	// Load the latest persisted version.  Called once after all
-	// calls to Mount*Store() are complete.
-	//LoadLatestVersion() error
-}
-

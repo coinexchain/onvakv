@@ -10,8 +10,23 @@ type OverlayedMultiStore struct {
 	storeKeys map[types.StoreKey]struct{}
 }
 
+var _ types.MultiStore = (*OverlayedMultiStore)(nil)
+
 func (ms *OverlayedMultiStore) SubStore(storeKey types.StoreKey) types.KObjStore {
-	panic("Not Implemented")
+	if _, ok := ms.storeKeys[storeKey]; !ok {
+		panic("Invalid StoreKey")
+	}
+	prefix := []byte(storeKey.String())
+	if len(prefix) < 2 {
+		panic("Prefix is too short")
+	}
+	if prefix[0] == 0 && prefix[1] == 0 {
+		panic("Prefix conflicts with guarding kv pair")
+	}
+	if prefix[0] == 255 && prefix[1] == 255 {
+		panic("Prefix conflicts with guarding kv pair")
+	}
+	return NewPrefixedStore(ms, prefix)
 }
 
 func (ms *OverlayedMultiStore) Cached() types.MultiStore {

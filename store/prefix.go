@@ -11,7 +11,9 @@ type PrefixedStore struct {
 	prefix []byte
 }
 
-func NewStore(parent types.BaseStore, prefix []byte) PrefixedStore {
+var _ types.KObjStore = PrefixedStore{}
+
+func NewPrefixedStore(parent types.BaseStore, prefix []byte) PrefixedStore {
 	return PrefixedStore{
 		parent: parent,
 		prefix: prefix,
