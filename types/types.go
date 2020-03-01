@@ -26,7 +26,6 @@ type UpdateTask struct {
 	Value     []byte
 }
 
-
 type IndexTree interface {
 	Init(dirname string, repFn func(string)) error
 	BeginWrite(height int64)
@@ -85,4 +84,3 @@ type MetaDB interface {
 	GetOldestActiveTwigID() int64
 	IncrOldestActiveTwigID()
 }
-

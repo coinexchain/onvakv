@@ -2,10 +2,10 @@ package indextree
 
 import (
 	"bytes"
+	"encoding/binary"
 	"io"
 	"math"
 	"sync"
-	"encoding/binary"
 
 	"github.com/coinexchain/onvakv/indextree/b"
 	"github.com/coinexchain/onvakv/types"
@@ -16,6 +16,8 @@ const (
 )
 
 type Iterator = types.Iterator
+var _ Iterator = (*ForwardIterMem)(nil)
+var _ Iterator = (*BackwardIterMem)(nil)
 
 type ForwardIterMem struct {
 	enumerator *b.Enumerator
@@ -35,8 +37,6 @@ type BackwardIterMem struct {
 	value      uint64
 	err        error
 }
-var _ Iterator = (*ForwardIterMem)(nil)
-var _ Iterator = (*BackwardIterMem)(nil)
 
 func (iter *ForwardIterMem) Domain() ([]byte, []byte) {
 	return iter.start, iter.end
@@ -62,7 +62,7 @@ func (iter *ForwardIterMem) Value() uint64 {
 	return iter.value
 }
 func (iter *ForwardIterMem) Close() {
-	iter.tree.mtx.RUnlock()
+	iter.tree.mtx.RUnlock() // It was locked when iter was created
 	iter.enumerator.Close()
 }
 
@@ -90,19 +90,18 @@ func (iter *BackwardIterMem) Value() uint64 {
 	return iter.value
 }
 func (iter *BackwardIterMem) Close() {
-	iter.tree.mtx.RUnlock()
+	iter.tree.mtx.RUnlock() // It was locked when iter was created
 	iter.enumerator.Close()
 }
 
 /* ============================
- Here we implement IndexTree with an in-memory B-Tree and a on-disk RocksDB
- The B-Tree contains only the latest key-position records, while the RocksDB
- contains several versions of positions for each key. The keys in RocksDB have
- two parts: the original key and 64-bit height. The height means the key-position
- record expires (get invalid) at this height. When the height is math.MaxUint64,
- the key-position record is up-to-date, i.e., not expired.
+Here we implement IndexTree with an in-memory B-Tree and a on-disk RocksDB.
+The B-Tree contains only the latest key-position records, while the RocksDB
+contains several versions of positions for each key. The keys in RocksDB have
+two parts: the original key and 64-bit height. The height means the key-position
+record expires (get invalid) at this height. When the height is math.MaxUint64,
+the key-position record is up-to-date, i.e., not expired.
 */
-
 
 type NVTreeMem struct {
 	mtx        sync.RWMutex
@@ -112,18 +111,19 @@ type NVTreeMem struct {
 	batch      *rocksDBBatch
 	currHeight [8]byte
 }
+
 var _ types.IndexTree = (*NVTreeMem)(nil)
 
 func NewNVTreeMem(entryCountLimit int) *NVTreeMem {
 	btree := b.TreeNew(bytes.Compare)
-	return &NVTreeMem {
-		bt:               btree,
+	return &NVTreeMem{
+		bt: btree,
 	}
 }
 
 // Load the RocksDB and use its up-to-date records to initialize the in-memory B-Tree.
 // RocksDB's historical records are ignored.
-func (tree *NVTreeMem) Init(dirname string, repFn func(string)) (err error) {
+func (tree *NVTreeMem) Init(dirname string, repFn func([]byte)) (err error) {
 	tree.rocksdb, err = NewRocksDB("idxtree", dirname)
 	if err != nil {
 		return err
@@ -133,13 +133,14 @@ func (tree *NVTreeMem) Init(dirname string, repFn func(string)) (err error) {
 	for iter.Valid() {
 		k := iter.Key()
 		v := iter.Value()
+		repFn(k) // to report the progress
 		if len(k) < 8 {
 			panic("key length is too short")
 		}
 		if len(v) != 8 && len(v) != 0 {
 			panic("value length is not 8 or 0")
 		}
-		if bytes.Equal(k[len(k)-8:], []byte{255,255,255,255,255,255,255,255}) {
+		if bytes.Equal(k[len(k)-8:], []byte{255, 255, 255, 255, 255, 255, 255, 255}) {
 			//write the up-to-date value
 			tree.bt.Set(k[:len(k)-8], binary.BigEndian.Uint64(v))
 		}
@@ -220,7 +221,7 @@ func (tree *NVTreeMem) GetAtHeight(k []byte, height uint64) (position uint64, ok
 	}
 
 	binary.BigEndian.PutUint64(newK[len(k):], math.MaxUint64)
-	if bytes.Compare(iter.Key(), newK) > 0 {
+	if bytes.Compare(iter.Key(), newK) > 0 { // to a different k
 		return 0, false
 	}
 
@@ -263,7 +264,7 @@ func (tree *NVTreeMem) Iterator(start, end []byte) Iterator {
 		panic("tree.isWriting cannot be true! bug here...")
 	}
 	tree.mtx.RLock()
-	iter := &ForwardIterMem{tree:tree, start:start, end:end}
+	iter := &ForwardIterMem{tree: tree, start: start, end: end}
 	if bytes.Compare(start, end) >= 0 {
 		iter.err = io.EOF
 		return iter
@@ -279,7 +280,7 @@ func (tree *NVTreeMem) ReverseIterator(start, end []byte) Iterator {
 		panic("tree.isWriting cannot be true! bug here...")
 	}
 	tree.mtx.RLock()
-	iter := &BackwardIterMem{tree:tree, start:start, end:end}
+	iter := &BackwardIterMem{tree: tree, start: start, end: end}
 	if bytes.Compare(start, end) >= 0 {
 		iter.err = io.EOF
 		return iter
@@ -295,4 +296,3 @@ func (tree *NVTreeMem) ReverseIterator(start, end []byte) Iterator {
 func (tree *NVTreeMem) SetPruneHeight(h uint64) {
 	tree.rocksdb.SetPruneHeight(h)
 }
-

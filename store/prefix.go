@@ -63,6 +63,7 @@ func (s PrefixedStore) Set(key, value []byte) {
 	}
 	s.parent.SetAsync(s.key(key), value)
 }
+
 // Implements KObjStore
 func (s PrefixedStore) SetObj(key []byte, obj types.Serializable) {
 	if obj == nil {
@@ -212,4 +213,3 @@ func PrefixEndBytes(prefix []byte) []byte {
 	}
 	return end
 }
-

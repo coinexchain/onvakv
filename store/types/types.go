@@ -2,7 +2,7 @@ package types
 
 type StoreKey interface {
 	Name() string
-	String() string
+	Prefix() string
 }
 
 type Serializable interface {
@@ -22,10 +22,11 @@ type ObjIterator interface {
 }
 
 type CacheStatus int
+
 const (
 	//nolint
-	Missed CacheStatus = 0
-	Hit CacheStatus = 1
+	Missed      CacheStatus = 0
+	Hit         CacheStatus = 1
 	JustDeleted CacheStatus = -1
 )
 
@@ -45,8 +46,9 @@ type KObjStore interface {
 type BaseStore interface {
 	Get(key []byte) []byte
 	GetObj(key []byte, ptr *Serializable)
-	GetObjForOverlay(key []byte, ptr *Serializable)
+	GetObjCopy(key []byte, ptr *Serializable)
 	GetReadOnlyObj(key []byte, ptr *Serializable)
+	PrefetchObj(key []byte, ptr *Serializable)
 	Has(key []byte) bool
 	Iterator(start, end []byte) ObjIterator
 	ReverseIterator(start, end []byte) ObjIterator

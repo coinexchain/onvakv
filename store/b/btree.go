@@ -13,7 +13,7 @@ import (
 var deletedMarker = de{}
 
 type Value struct {
-	obj       interface{}
+	obj interface{}
 }
 
 func NilValue() Value {

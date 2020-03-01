@@ -5,15 +5,15 @@ import (
 
 	dbm "github.com/tendermint/tm-db"
 
-	"github.com/coinexchain/onvakv/types"
 	"github.com/coinexchain/onvakv/datatree"
+	"github.com/coinexchain/onvakv/types"
 )
 
 const StartReapThres int64 = 1000 * 1000
 const ActiveEntriesToKeptEntriesRation = 3
 
 func (okv *OnvaKV) PruneBeforeHeight(height int64) {
-	start := okv.meta.GetLastPrunedTwig()+1
+	start := okv.meta.GetLastPrunedTwig() + 1
 	end := start
 	endHeight := okv.meta.GetTwigHeight(end)
 	for endHeight < height && okv.datTree.TwigCanBePruned(end) {
@@ -23,7 +23,7 @@ func (okv *OnvaKV) PruneBeforeHeight(height int64) {
 	if end > start {
 		edgeNodes := okv.datTree.PruneTwigs(start, end)
 		okv.meta.SetEdgeNodes(edgeNodes)
-		for i:=start; i<=end; i++ {
+		for i := start; i <= end; i++ {
 			okv.meta.DeleteTwigHeight(i)
 		}
 		okv.meta.SetLastPrunedTwig(end)
@@ -38,16 +38,16 @@ type OnvaKV struct {
 }
 
 const (
-	SET = 1
+	SET    = 1
 	CHANGE = 2
 	INSERT = 3
 	DELETE = 4
-	NOP = 0
+	NOP    = 0
 )
 
 type Entry = types.Entry
 
-func NewSetTask(k,v []byte) types.UpdateTask {
+func NewSetTask(k, v []byte) types.UpdateTask {
 	return types.UpdateTask{
 		TaskKind: SET,
 		Key:      k,
@@ -154,7 +154,7 @@ func (okv *OnvaKV) runTask(task types.UpdateTask) {
 
 const (
 	MinimumTasksInGoroutine = 10
-	MaximumGoroutines = 128
+	MaximumGoroutines       = 128
 )
 
 func (okv *OnvaKV) prepareTask(task *types.UpdateTask) {
@@ -180,21 +180,21 @@ func (okv *OnvaKV) prepareTask(task *types.UpdateTask) {
 
 func (okv *OnvaKV) prepareTasks(tasks []types.UpdateTask) {
 	stripe := MinimumTasksInGoroutine
-	if stripe * MaximumGoroutines < len(tasks) {
-		stripe = len(tasks)/MaximumGoroutines
+	if stripe*MaximumGoroutines < len(tasks) {
+		stripe = len(tasks) / MaximumGoroutines
 		if len(tasks)%MaximumGoroutines != 0 {
 			stripe++
 		}
 	}
 	var wg sync.WaitGroup
-	for start:=0; start<len(tasks); start+=stripe {
-		end := start+stripe
+	for start := 0; start < len(tasks); start += stripe {
+		end := start + stripe
 		if end > len(tasks) {
 			end = len(tasks)
 		}
 		wg.Add(1)
 		go func() {
-			for i:=start; i<end; i++ {
+			for i := start; i < end; i++ {
 				okv.prepareTask(&tasks[i])
 			}
 			wg.Done()
@@ -204,7 +204,7 @@ func (okv *OnvaKV) prepareTasks(tasks []types.UpdateTask) {
 }
 
 func (okv *OnvaKV) numOfKeptEntries() int64 {
-	return okv.meta.GetMaxSerialNum() - okv.meta.GetOldestActiveTwigID() * datatree.LeafCountInTwig
+	return okv.meta.GetMaxSerialNum() - okv.meta.GetOldestActiveTwigID()*datatree.LeafCountInTwig
 }
 
 func (okv *OnvaKV) EndBlock(tasks []types.UpdateTask, height int64) {
@@ -215,7 +215,7 @@ func (okv *OnvaKV) EndBlock(tasks []types.UpdateTask, height int64) {
 	}
 	okv.meta.SetCurrHeight(height)
 	for okv.numOfKeptEntries() > okv.meta.GetActiveEntryCount()*ActiveEntriesToKeptEntriesRation &&
-	okv.meta.GetActiveEntryCount() > StartReapThres {
+		okv.meta.GetActiveEntryCount() > StartReapThres {
 		twigID := okv.meta.GetOldestActiveTwigID()
 		entries := okv.datTree.GetActiveEntriesInTwig(twigID)
 		for _, e := range entries {
@@ -270,6 +270,3 @@ func (okv *OnvaKV) Iterator(start, end []byte) dbm.Iterator {
 func (okv *OnvaKV) ReverseIterator(start, end []byte) dbm.Iterator {
 	return &OnvaIterator{okv: okv, iter: okv.idxTree.ReverseIterator(start, end)}
 }
-
-
-

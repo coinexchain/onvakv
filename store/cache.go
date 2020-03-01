@@ -2,11 +2,11 @@ package store
 
 import (
 	"bytes"
-	"reflect"
 	"io"
+	"reflect"
 
-	"github.com/coinexchain/onvakv/store/types"
 	"github.com/coinexchain/onvakv/store/b"
+	"github.com/coinexchain/onvakv/store/types"
 )
 
 type CacheStore struct {
@@ -14,7 +14,7 @@ type CacheStore struct {
 }
 
 func NewCacheStore() *CacheStore {
-	return &CacheStore {
+	return &CacheStore{
 		bt: b.TreeNew(bytes.Compare),
 	}
 }
@@ -57,7 +57,7 @@ func (cs *CacheStore) Get(key []byte) (res []byte, status types.CacheStatus) {
 	return
 }
 
-func (cs *CacheStore) GetObjForOverlay(key []byte, ptr *types.Serializable) (status types.CacheStatus) {
+func (cs *CacheStore) GetObjCopy(key []byte, ptr *types.Serializable) (status types.CacheStatus) {
 	cs.bt.Put(key, func(oldV b.Value, exists bool) (newV b.Value, write bool) {
 		if exists {
 			if oldV.IsDeleted() {
@@ -140,7 +140,6 @@ func (cs *CacheStore) Delete(key []byte) {
 	cs.bt.Set(append([]byte{}, key...), v)
 }
 
-
 type ForwardIter struct {
 	enumerator *b.Enumerator
 	start      []byte
@@ -157,6 +156,7 @@ type BackwardIter struct {
 	value      b.Value
 	err        error
 }
+
 var _ types.ObjIterator = (*ForwardIter)(nil)
 var _ types.ObjIterator = (*BackwardIter)(nil)
 
@@ -247,7 +247,7 @@ func (iter *BackwardIter) Close() {
 }
 
 func (cs *CacheStore) Iterator(start, end []byte) types.ObjIterator {
-	iter := &ForwardIter{start:start, end:end}
+	iter := &ForwardIter{start: start, end: end}
 	if bytes.Compare(start, end) >= 0 {
 		iter.err = io.EOF
 		return iter
@@ -258,7 +258,7 @@ func (cs *CacheStore) Iterator(start, end []byte) types.ObjIterator {
 }
 
 func (cs *CacheStore) ReverseIterator(start, end []byte) types.ObjIterator {
-	iter := &BackwardIter{start:start, end:end}
+	iter := &BackwardIter{start: start, end: end}
 	if bytes.Compare(start, end) >= 0 {
 		iter.err = io.EOF
 		return iter
@@ -269,4 +269,3 @@ func (cs *CacheStore) ReverseIterator(start, end []byte) types.ObjIterator {
 	iter.Next() //fill key, value, err
 	return iter
 }
-

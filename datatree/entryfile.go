@@ -12,23 +12,24 @@ import (
 
 type Entry = types.Entry
 
-const MaxEntryBytes int = (1<<24)-1
-var MagicBytes = [8]byte{byte('I'),byte('L'),byte('O'),byte('V'),byte('E'),byte('Y'),byte('O'),byte('U')}
+const MaxEntryBytes int = (1 << 24) - 1
+
+var MagicBytes = [8]byte{byte('I'), byte('L'), byte('O'), byte('V'), byte('E'), byte('Y'), byte('O'), byte('U')}
 
 func NullEntry() Entry {
 	return Entry{
-		Key:       []byte{},
-		Value:     []byte{},
-		NextKey:   []byte{},
-		Height:    -1,
-		LastHeight:-1,
-		SerialNum: -1,
+		Key:        []byte{},
+		Value:      []byte{},
+		NextKey:    []byte{},
+		Height:     -1,
+		LastHeight: -1,
+		SerialNum:  -1,
 	}
 }
 
 // Entry serialization format:
 // magicBytes 8-bytes
-// 32b-totalLength without padding, checksum and itself
+// 32b-totalLength (this length does not include padding, checksum and this field itself)
 // magicBytesPos(list of 32b-int, -1 for ending), posistions are relative to the end of 32b-totalLength
 // normalPayload
 // DeactivedSerialNumList (list of 64b-int, -1 for ending)
@@ -36,27 +37,58 @@ func NullEntry() Entry {
 // padding-zero-bytes
 
 func EntryToBytes(entry Entry, deactivedSerialNumList []int64) []byte {
-	length := 4+4 // 32b-totalLength and empty magicBytesPos
-	length += 4*3 + len(entry.Key)+len(entry.Value)+len(entry.NextKey) //Three strings
-	length += +8*3 // Three int64
-	length += (len(deactivedSerialNumList)+1)*8
+	length := 4 + 4                                                        // 32b-totalLength and empty magicBytesPos
+	length += 4*3 + len(entry.Key) + len(entry.Value) + len(entry.NextKey) // Three strings
+	length += 8 * 3                                                        // Three int64
+	length += (len(deactivedSerialNumList) + 1) * 8
 	b := make([]byte, length)
 
 	const start = 8
-	i := start
+	writeEntryPayload(b[start:], entry, deactivedSerialNumList)
+
+	magicBytesPosList := getAllPos(b[start:], MagicBytes[:])
+	if len(magicBytesPosList) == 0 {
+		binary.LittleEndian.PutUint32(b[:4], uint32(length-4))
+		binary.LittleEndian.PutUint32(b[4:8], ^uint32(0))
+		return b
+	}
+
+	// if magicBytesPosList is not empty:
+	var zeroBuf [8]byte
+	for _, pos := range magicBytesPosList {
+		copy(b[pos:pos+8], zeroBuf[:]) // over-write the occurrence of magic bytes with zeros
+	}
+	length += 4 * len(magicBytesPosList)
+	buf := make([]byte, length)
+	// Re-write the new length. minus 4 because the first 4 bytes of length isn't included
+	binary.LittleEndian.PutUint32(buf[:4], uint32(length-4))
+
+	bytesAdded := 4 * len(magicBytesPosList)
+	var i int
+	for i = 0; i < len(magicBytesPosList); i++ {
+		pos := magicBytesPosList[i] + bytesAdded /*32b-length*/
+		binary.LittleEndian.PutUint32(buf[i*4+4:i*4+8], uint32(pos))
+	}
+	binary.LittleEndian.PutUint32(buf[i*4+4:i*4+8], ^uint32(0))
+	copy(buf[i*4+8:], b[8:])
+	return buf
+}
+
+func writeEntryPayload(b []byte, entry Entry, deactivedSerialNumList []int64) {
+	i := 0
 	binary.LittleEndian.PutUint32(b[i:i+4], uint32(len(entry.Key)))
 	i += 4
-	copy(b[i:i+length], entry.Key)
+	copy(b[i:], entry.Key)
 	i += len(entry.Key)
 
 	binary.LittleEndian.PutUint32(b[i:i+4], uint32(len(entry.Value)))
 	i += 4
-	copy(b[i:i+length], entry.Value)
+	copy(b[i:], entry.Value)
 	i += len(entry.Value)
 
 	binary.LittleEndian.PutUint32(b[i:i+4], uint32(len(entry.NextKey)))
 	i += 4
-	copy(b[i:i+length], entry.NextKey)
+	copy(b[i:], entry.NextKey)
 	i += len(entry.NextKey)
 
 	binary.LittleEndian.PutUint64(b[i:i+8], uint64(entry.Height))
@@ -71,39 +103,15 @@ func EntryToBytes(entry Entry, deactivedSerialNumList []int64) []byte {
 		i += 8
 	}
 	binary.LittleEndian.PutUint64(b[i:i+8], math.MaxUint64)
-
-	magicBytesPosList := getAllPos(b, MagicBytes[:], start)
-	if len(magicBytesPosList) ==0 {
-		binary.LittleEndian.PutUint32(b[:4], uint32(length-4))
-		binary.LittleEndian.PutUint32(b[4:8], ^uint32(0))
-		return b
-	}
-
-	var zeroBuf [8]byte
-	for _, pos := range magicBytesPosList {
-		copy(b[pos:pos+8], zeroBuf[:])
-	}
-	length += 4 * len(magicBytesPosList)
-	buf := make([]byte, length)
-	binary.LittleEndian.PutUint32(buf[:4], uint32(length-4))
-	bytesAdded := 4 * (len(magicBytesPosList) - 1)
-	for i=0; i < len(magicBytesPosList); i++ {
-		pos := magicBytesPosList[i]+bytesAdded-4/*32b-length*/
-		binary.LittleEndian.PutUint32(buf[i*4+4:i*4+8], uint32(pos))
-	}
-	binary.LittleEndian.PutUint32(buf[i*4+4:i*4+8], ^uint32(0))
-	copy(buf[i*4+8:], b[8:])
-	return buf
 }
 
-func getAllPos(s, sep []byte, start int) (allpos []int) {
-	for start < len(s) {
-		pos := bytes.Index(s[start:], sep)
+func getAllPos(s, sep []byte) (allpos []int) {
+	for start, pos := 0, 0; start < len(s); start = pos + len(sep) {
+		pos = bytes.Index(s[start:], sep)
 		if pos == -1 {
 			return
 		}
-		allpos = append(allpos, pos + start)
-		start = pos+len(sep)
+		allpos = append(allpos, pos+start)
 	}
 	return
 }
@@ -112,34 +120,34 @@ func EntryFromBytes(b []byte) (*Entry, []uint64) {
 	entry := &Entry{}
 	i := 0
 
-	length := int(binary.LittleEndian.Uint32(b[i:i+4]))
+	length := int(binary.LittleEndian.Uint32(b[i : i+4]))
 	i += 4
 	entry.Key = append([]byte{}, b[i:i+length]...)
 	i += length
 
-	length = int(binary.LittleEndian.Uint32(b[i:i+4]))
+	length = int(binary.LittleEndian.Uint32(b[i : i+4]))
 	i += 4
 	entry.Value = append([]byte{}, b[i:i+length]...)
 	i += length
 
-	length = int(binary.LittleEndian.Uint32(b[i:i+4]))
+	length = int(binary.LittleEndian.Uint32(b[i : i+4]))
 	i += 4
 	entry.NextKey = append([]byte{}, b[i:i+length]...)
 	i += length
 
-	entry.Height = int64(binary.LittleEndian.Uint64(b[i:i+8]))
+	entry.Height = int64(binary.LittleEndian.Uint64(b[i : i+8]))
 	i += 8
-	entry.LastHeight = int64(binary.LittleEndian.Uint64(b[i:i+8]))
+	entry.LastHeight = int64(binary.LittleEndian.Uint64(b[i : i+8]))
 	i += 8
-	entry.SerialNum = int64(binary.LittleEndian.Uint64(b[i:i+8]))
+	entry.SerialNum = int64(binary.LittleEndian.Uint64(b[i : i+8]))
 	i += 8
 
 	var deactivedSerialNumList []uint64
-	sn := binary.LittleEndian.Uint64(b[i:i+8])
+	sn := binary.LittleEndian.Uint64(b[i : i+8])
 	for sn != math.MaxUint64 {
 		deactivedSerialNumList = append(deactivedSerialNumList, sn)
 		i += 8
-		sn = binary.LittleEndian.Uint64(b[i:i+8])
+		sn = binary.LittleEndian.Uint64(b[i : i+8])
 	}
 
 	return entry, deactivedSerialNumList
@@ -150,7 +158,7 @@ type EntryFile struct {
 }
 
 func getPaddingSize(length int) int {
-	rem := length%8
+	rem := length % 8
 	if rem == 0 {
 		return 0
 	} else {
@@ -181,15 +189,15 @@ func (ef *EntryFile) readMagicBytesAndLength(off int64) int {
 func (ef *EntryFile) SkipEntry(off int64) int64 {
 	length := ef.readMagicBytesAndLength(off)
 	paddingSize := getPaddingSize(length)
-	nextPos := off + 8/*magicbytes*/ + 4/*length*/ + int64(length) + 4/*checksum*/ + int64(paddingSize)
+	nextPos := off + 8 /*magicbytes*/ + 4 /*length*/ + int64(length) + 4 /*checksum*/ + int64(paddingSize)
 	return nextPos
 }
 
 func (ef *EntryFile) ReadEntry(off int64) (*Entry, []uint64, int64) {
 	length := ef.readMagicBytesAndLength(off)
 	paddingSize := getPaddingSize(length)
-	nextPos := off + 8/*magicbytes*/ + 4/*length*/ + int64(length) + 4/*checksum*/ + int64(paddingSize)
-	b := make([]byte, length + 4 + paddingSize)
+	nextPos := off + 8 /*magicbytes*/ + 4 /*length*/ + int64(length) + 4 /*checksum*/ + int64(paddingSize)
+	b := make([]byte, length+4+paddingSize)
 	err := ef.HPFile.ReadAt(b, off+12)
 	if err != nil {
 		panic(err)
@@ -200,8 +208,8 @@ func (ef *EntryFile) ReadEntry(off int64) (*Entry, []uint64, int64) {
 		panic("Checksum Error")
 	}
 	var n int
-	for n=0; n<length; n+=4 {
-		pos := binary.LittleEndian.Uint32(b[n:n+4])
+	for n = 0; n < length; n += 4 { // recover magic bytes in payload
+		pos := binary.LittleEndian.Uint32(b[n : n+4])
 		if pos == ^(uint32(0)) {
 			break
 		}
@@ -247,15 +255,14 @@ func (ef *EntryFile) PruneHead(off int64) {
 	}
 }
 func (ef *EntryFile) Append(b []byte) (pos int64) {
-	var bb bytes.Buffer
-	bb.Write(MagicBytes[:])
-	bb.Write(b)
+	var bb [4][]byte
+	bb[0] = MagicBytes[:]
+	bb[1] = b
 	h := meow.New32(0)
 	h.Write(b)
-	bb.Write(h.Sum(nil))
-	padding := make([]byte, getPaddingSize(len(b)))
-	bb.Write(padding)
-	pos, err := ef.HPFile.Append(bb.Bytes())
+	bb[2] = h.Sum(nil)
+	bb[3] = make([]byte, getPaddingSize(len(b))) // padding zero bytes
+	pos, err := ef.HPFile.Append(bb[:])
 	if pos%8 != 0 {
 		panic("Entries are not aligned")
 	}
@@ -267,7 +274,7 @@ func (ef *EntryFile) Append(b []byte) (pos int64) {
 
 func (ef *EntryFile) GetActiveEntriesInTwig(twig *Twig) (res []*Entry) {
 	start := twig.FirstEntryPos
-	for i:=0; i < LeafCountInTwig; i++ {
+	for i := 0; i < LeafCountInTwig; i++ {
 		if twig.getBit(i) {
 			entry, _, next := ef.ReadEntry(start)
 			start = next
@@ -278,4 +285,3 @@ func (ef *EntryFile) GetActiveEntriesInTwig(twig *Twig) (res []*Entry) {
 	}
 	return
 }
-

@@ -2,8 +2,8 @@ package datatree
 
 import (
 	"bytes"
-	"fmt"
 	"encoding/binary"
+	"fmt"
 
 	"github.com/mmcloughlin/meow"
 )
@@ -17,7 +17,7 @@ func NewTwigMtFile(blockSize int, dirName string) (res TwigMtFile, err error) {
 	return
 }
 
-const TwigMtSize = 12+4095*36
+const TwigMtSize = 12 + 4095*36
 
 func (tf *TwigMtFile) AppendTwig(mtree [][32]byte, firstEntryPos int64) {
 	var buf [36]byte
@@ -25,7 +25,7 @@ func (tf *TwigMtFile) AppendTwig(mtree [][32]byte, firstEntryPos int64) {
 	h := meow.New32(0)
 	h.Write(buf[:8])
 	copy(buf[8:12], h.Sum(nil))
-	_, err := tf.HPFile.Append(buf[:12]) // 12 bytes
+	_, err := tf.HPFile.Append([][]byte{buf[:12]}) // 8+4 bytes
 	if err != nil {
 		panic(err)
 	}
@@ -34,7 +34,7 @@ func (tf *TwigMtFile) AppendTwig(mtree [][32]byte, firstEntryPos int64) {
 		h.Write(mtree[i][:])
 		copy(buf[:32], mtree[i][:])
 		copy(buf[32:], h.Sum(nil))
-		_, err := tf.HPFile.Append(buf[:]) // 36 bytes
+		_, err := tf.HPFile.Append([][]byte{buf[:]}) // 32+4 bytes
 		if err != nil {
 			panic(err)
 		}
@@ -57,10 +57,10 @@ func (tf *TwigMtFile) GetFirstEntryPos(twigID int64) int64 {
 
 func (tf *TwigMtFile) GetHashNode(twigID int64, hashID int) []byte {
 	var buf [36]byte
-	if hashID<=0 || hashID >= 4096 {
+	if hashID <= 0 || hashID >= 4096 {
 		panic(fmt.Sprintf("Invalid hashID: %d", hashID))
 	}
-	offset := twigID*int64(TwigMtSize)+12+(int64(hashID)-1)*36
+	offset := twigID*int64(TwigMtSize) + 12 + (int64(hashID)-1)*36
 	err := tf.HPFile.ReadAt(buf[:], offset)
 	if err != nil {
 		panic(err)
@@ -101,4 +101,3 @@ func (tf *TwigMtFile) PruneHead(off int64) {
 		panic(err)
 	}
 }
-

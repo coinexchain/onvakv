@@ -3,7 +3,7 @@
 package cppbtree
 
 /*
-#cgo CXXFLAGS: -O3
+#cgo CXXFLAGS: -O3 -std=c++11 
 #cgo LDFLAGS: -lstdc++
 #include "cppbtree.h"
 */
@@ -15,8 +15,8 @@ import (
 )
 
 type Enumerator struct {
-	tr    unsafe.Pointer
-	it    unsafe.Pointer
+	tree    unsafe.Pointer
+	iter    unsafe.Pointer
 }
 
 type Tree struct {
@@ -35,9 +35,9 @@ func (tree *Tree) Close() {
 
 func (tree *Tree) PutNewAndGetOld(key []byte, newV uint64) (uint64, bool) {
 	keydata := (*C.char)(unsafe.Pointer(&key[0]))
-	var ok C.int
-	oldV := C.cppbtree_put_new_and_get_old(tree.ptr, keydata, C.int(len(key)), C.ulonglong(newV), &ok)
-	return uint64(oldV), ok!=0
+	var oldExists C.int
+	oldV := C.cppbtree_put_new_and_get_old(tree.ptr, keydata, C.int(len(key)), C.ulonglong(newV), &oldExists)
+	return uint64(oldV), oldExists!=0
 }
 
 func (tree *Tree) Set(key []byte, value uint64) {
@@ -60,26 +60,26 @@ func (tree *Tree) Get(key []byte) (uint64, bool) {
 func (tree *Tree) Seek(key []byte) (*Enumerator, error) {
 	keydata := (*C.char)(unsafe.Pointer(&key[0]))
 	e := &Enumerator{
-		tr:  tree.ptr,
-		it: C.cppbtree_seek(tree.ptr, keydata, C.int(len(key))),
+		tree:  tree.ptr,
+		iter: C.cppbtree_seek(tree.ptr, keydata, C.int(len(key))),
 	}
 	return e, nil
 }
 
 func (tree *Tree) SeekFirst(key []byte) (*Enumerator, error) {
 	e := &Enumerator{
-		tr:  tree.ptr,
-		it: C.cppbtree_seekfirst(tree.ptr),
+		tree:  tree.ptr,
+		iter: C.cppbtree_seekfirst(tree.ptr),
 	}
 	return e, nil
 }
 
 func (e *Enumerator) Close() {
-	C.iter_delete(e.it)
+	C.iter_delete(e.iter)
 }
 
 func (e *Enumerator) Next() (k []byte, v uint64, err error) {
-	res := C.iter_next(e.tr, e.it)
+	res := C.iter_next(e.tree, e.iter)
 	v = uint64(res.value)
 	err = nil
 	if res.is_valid == 0 {
@@ -90,7 +90,7 @@ func (e *Enumerator) Next() (k []byte, v uint64, err error) {
 }
 
 func (e *Enumerator) Prev() (k []byte, v uint64, err error) {
-	res := C.iter_prev(e.tr, e.it)
+	res := C.iter_prev(e.tree, e.iter)
 	v = uint64(res.value)
 	err = nil
 	if res.is_valid == 0 {

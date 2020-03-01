@@ -11,26 +11,21 @@ type OverlayedMultiStore struct {
 }
 
 var _ types.MultiStore = (*OverlayedMultiStore)(nil)
+var _ types.KObjStore = (*OverlayedMultiStore)(nil)
 
 func (ms *OverlayedMultiStore) SubStore(storeKey types.StoreKey) types.KObjStore {
+	if storeKey == nil {
+		return ms
+	}
 	if _, ok := ms.storeKeys[storeKey]; !ok {
 		panic("Invalid StoreKey")
 	}
-	prefix := []byte(storeKey.String())
-	if len(prefix) < 2 {
-		panic("Prefix is too short")
-	}
-	if prefix[0] == 0 && prefix[1] == 0 {
-		panic("Prefix conflicts with guarding kv pair")
-	}
-	if prefix[0] == 255 && prefix[1] == 255 {
-		panic("Prefix conflicts with guarding kv pair")
-	}
+	prefix := []byte(storeKey.Prefix())
 	return NewPrefixedStore(ms, prefix)
 }
 
 func (ms *OverlayedMultiStore) Cached() types.MultiStore {
-	return &OverlayedMultiStore {
+	return &OverlayedMultiStore{
 		cache:     NewCacheStore(),
 		parent:    ms,
 		storeKeys: ms.storeKeys,
@@ -51,13 +46,13 @@ func (ms *OverlayedMultiStore) Get(key []byte) []byte {
 	}
 }
 
-func (ms *OverlayedMultiStore) GetObjForOverlay(key []byte, ptr *types.Serializable) {
-	status := ms.cache.GetObjForOverlay(key, ptr)
+func (ms *OverlayedMultiStore) GetObjCopy(key []byte, ptr *types.Serializable) {
+	status := ms.cache.GetObjCopy(key, ptr)
 	switch status {
 	case types.JustDeleted:
 		ptr = nil
 	case types.Missed:
-		ms.parent.GetObjForOverlay(key, ptr)
+		ms.parent.GetObjCopy(key, ptr)
 	}
 }
 
@@ -67,7 +62,7 @@ func (ms *OverlayedMultiStore) GetObj(key []byte, ptr *types.Serializable) {
 	case types.JustDeleted:
 		ptr = nil
 	case types.Missed:
-		ms.parent.GetObjForOverlay(key, ptr)
+		ms.parent.GetObjCopy(key, ptr)
 	}
 }
 
@@ -78,6 +73,17 @@ func (ms *OverlayedMultiStore) GetReadOnlyObj(key []byte, ptr *types.Serializabl
 		ptr = nil
 	case types.Missed:
 		ms.parent.GetReadOnlyObj(key, ptr)
+	}
+}
+
+func (ms *OverlayedMultiStore) PrefetchObj(key []byte, ptr *types.Serializable) {
+	status := ms.cache.GetObj(key, ptr)
+	switch status {
+	case types.JustDeleted:
+		ptr = nil
+	case types.Missed:
+		ms.parent.GetObjCopy(key, ptr)
+		ms.cache.SetObj(key, *ptr)
 	}
 }
 
@@ -94,6 +100,18 @@ func (ms *OverlayedMultiStore) SetObjAsync(key []byte, obj types.Serializable) {
 }
 
 func (ms *OverlayedMultiStore) DeleteAsync(key []byte) {
+	ms.cache.Delete(key)
+}
+
+func (ms *OverlayedMultiStore) Set(key, value []byte) {
+	ms.cache.Set(key, value)
+}
+
+func (ms *OverlayedMultiStore) SetObj(key []byte, obj types.Serializable) {
+	ms.cache.SetObj(key, obj)
+}
+
+func (ms *OverlayedMultiStore) Delete(key []byte) {
 	ms.cache.Delete(key)
 }
 
@@ -120,4 +138,3 @@ func (ms *OverlayedMultiStore) Iterator(start, end []byte) types.ObjIterator {
 func (ms *OverlayedMultiStore) ReverseIterator(start, end []byte) types.ObjIterator {
 	return newCacheMergeIterator(ms.parent.ReverseIterator(start, end), ms.cache.ReverseIterator(start, end), false)
 }
-

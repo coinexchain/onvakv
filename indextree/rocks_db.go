@@ -2,13 +2,13 @@ package indextree
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"path/filepath"
 	"runtime"
-	"encoding/binary"
 
-	dbm "github.com/tendermint/tm-db"
 	"github.com/tecbot/gorocksdb"
+	dbm "github.com/tendermint/tm-db"
 )
 
 // We use rocksdb's customizable compact filter to prune old records
@@ -374,4 +374,3 @@ func nonNilBytes(bz []byte) []byte {
 	}
 	return bz
 }
-

@@ -6,20 +6,20 @@ import (
 
 	dbm "github.com/tendermint/tm-db"
 
-	"github.com/coinexchain/onvakv/types"
 	"github.com/coinexchain/onvakv/datatree"
+	"github.com/coinexchain/onvakv/types"
 )
 
 const (
-	ByteCurrHeight            = byte(0x10)
-	ByteTwigMtFileSize        = byte(0x11)
-	ByteEntryFileSize         = byte(0x12)
-	ByteTwigHeight            = byte(0x13)
-	ByteLastPrunedTwig        = byte(0x14)
-	ByteEdgeNodes             = byte(0x15)
-	ByteMaxSerialNum          = byte(0x16)
-	ByteActiveEntryCount      = byte(0x17)
-	ByteOldestActiveTwigID    = byte(0x18)
+	ByteCurrHeight         = byte(0x10)
+	ByteTwigMtFileSize     = byte(0x11)
+	ByteEntryFileSize      = byte(0x12)
+	ByteTwigHeight         = byte(0x13)
+	ByteLastPrunedTwig     = byte(0x14)
+	ByteEdgeNodes          = byte(0x15)
+	ByteMaxSerialNum       = byte(0x16)
+	ByteActiveEntryCount   = byte(0x17)
+	ByteOldestActiveTwigID = byte(0x18)
 )
 
 type MetaDBWithTMDB struct {
@@ -106,7 +106,7 @@ func (db *MetaDBWithTMDB) GetEntryFileSize() int64 {
 func (db *MetaDBWithTMDB) setTwigHeight(twigID int64, height int64) {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], uint64(twigID))
-	key := append([]byte{ByteEntryFileSize}, buf[:]...)
+	key := append([]byte{ByteTwigHeight}, buf[:]...)
 	binary.LittleEndian.PutUint64(buf[:], uint64(height))
 	db.batch.Set(key, buf[:])
 }
@@ -114,7 +114,7 @@ func (db *MetaDBWithTMDB) setTwigHeight(twigID int64, height int64) {
 func (db *MetaDBWithTMDB) GetTwigHeight(twigID int64) int64 {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], uint64(twigID))
-	bz := db.kvdb.Get(append([]byte{ByteEntryFileSize}, buf[:]...))
+	bz := db.kvdb.Get(append([]byte{ByteTwigHeight}, buf[:]...))
 	if len(bz) == 0 {
 		return math.MinInt64
 	}
@@ -124,7 +124,7 @@ func (db *MetaDBWithTMDB) GetTwigHeight(twigID int64) int64 {
 func (db *MetaDBWithTMDB) DeleteTwigHeight(twigID int64) {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], uint64(twigID))
-	db.kvdb.Delete(append([]byte{ByteEntryFileSize}, buf[:]...))
+	db.kvdb.Delete(append([]byte{ByteTwigHeight}, buf[:]...))
 }
 
 func (db *MetaDBWithTMDB) SetLastPrunedTwig(twigID int64) {
@@ -147,10 +147,10 @@ func (db *MetaDBWithTMDB) GetMaxSerialNum() int64 {
 	return db.maxSerialNum
 }
 
-func (db *MetaDBWithTMDB) IncrMaxSerialNum()  {
+func (db *MetaDBWithTMDB) IncrMaxSerialNum() {
 	db.maxSerialNum++
 	if db.maxSerialNum%datatree.LeafCountInTwig == 0 {
-		twigID := db.maxSerialNum/datatree.LeafCountInTwig
+		twigID := db.maxSerialNum / datatree.LeafCountInTwig
 		db.setTwigHeight(twigID, db.currHeight)
 	}
 }
@@ -174,5 +174,3 @@ func (db *MetaDBWithTMDB) GetOldestActiveTwigID() int64 {
 func (db *MetaDBWithTMDB) IncrOldestActiveTwigID() {
 	db.oldestActiveTwigID++
 }
-
-

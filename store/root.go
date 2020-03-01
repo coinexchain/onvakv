@@ -5,21 +5,22 @@ import (
 
 	dbm "github.com/tendermint/tm-db"
 
-	"github.com/coinexchain/onvakv/store/types"
 	"github.com/coinexchain/onvakv"
+	"github.com/coinexchain/onvakv/store/types"
 	onvatypes "github.com/coinexchain/onvakv/types"
 )
 
 // TODO: add guard kv pairs
 
-const CacheSizeLimit = 1024*1024
+const CacheSizeLimit = 1024 * 1024
 
 type OnvaRootStore struct {
-	cache     map[string]types.Serializable
-	okv       *onvakv.OnvaKV
-	tasks     []onvatypes.UpdateTask
-	height    int64
-	storeKeys map[types.StoreKey]struct{}
+	cache       map[string]types.Serializable
+	cacheableFn func(k []byte) bool
+	okv         *onvakv.OnvaKV
+	tasks       []onvatypes.UpdateTask
+	height      int64
+	storeKeys   map[types.StoreKey]struct{}
 }
 
 var _ types.BaseStore = (*OnvaRootStore)(nil)
@@ -31,11 +32,15 @@ func (root *OnvaRootStore) SetHeight(h int64) {
 func (root *OnvaRootStore) Get(key []byte) []byte {
 	return root.okv.Get(key)
 }
-func (root *OnvaRootStore) GetObjForOverlay(key []byte, ptr *types.Serializable) {
+func (root *OnvaRootStore) GetObjCopy(key []byte, ptr *types.Serializable) {
 	root.GetObj(key, ptr)
 }
 func (root *OnvaRootStore) GetObj(key []byte, ptr *types.Serializable) {
-	obj, ok := root.cache[string(key)]
+	ok := false
+	var obj types.Serializable
+	if root.cacheableFn(key) {
+		obj, ok = root.cache[string(key)]
+	}
 	if ok {
 		reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(obj))
 		root.cache[string(key)] = obj.DeepCopy().(types.Serializable)
@@ -46,13 +51,18 @@ func (root *OnvaRootStore) GetObj(key []byte, ptr *types.Serializable) {
 	}
 }
 func (root *OnvaRootStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
-	obj, ok := root.cache[string(key)]
-	if ok {
-		reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(obj))
-	} else if bz := root.okv.Get(key); bz != nil {
-		(*ptr).FromBytes(bz)
-	} else {
-		*ptr = nil
+	root.GetObj(key, ptr)
+}
+func (root *OnvaRootStore) PrefetchObj(key []byte, ptr *types.Serializable) {
+	ok := false
+	if root.cacheableFn(key) {
+		_, ok = root.cache[string(key)]
+	}
+	if !ok {
+		if bz := root.okv.Get(key); bz != nil {
+			(*ptr).FromBytes(bz)
+			root.cache[string(key)] = *ptr
+		}
 	}
 }
 func (root *OnvaRootStore) Has(key []byte) bool {
@@ -71,6 +81,9 @@ func (root *OnvaRootStore) SetObjAsync(key []byte, obj types.Serializable) {
 	root.tasks = append(root.tasks, onvakv.NewSetTask(key, obj.ToBytes()))
 }
 func (root *OnvaRootStore) addToCache(key []byte, obj types.Serializable) {
+	if !root.cacheableFn(key) {
+		return
+	}
 	if len(root.cache) > CacheSizeLimit {
 		for k := range root.cache {
 			delete(root.cache, k) //remove a random entry
@@ -87,7 +100,7 @@ func (root *OnvaRootStore) Flush() {
 	root.tasks = root.tasks[:0]
 }
 func (root *OnvaRootStore) Cached() types.MultiStore {
-	return &OverlayedMultiStore {
+	return &OverlayedMultiStore{
 		cache:     NewCacheStore(),
 		parent:    root,
 		storeKeys: root.storeKeys,
@@ -118,19 +131,26 @@ func (iter *RootStoreIterator) Value() (value []byte) {
 	return iter.iter.Value()
 }
 func (iter *RootStoreIterator) ObjValue(ptr *types.Serializable) {
-	if obj, ok := iter.root.cache[string(iter.iter.Key())]; ok {
-		reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(obj))
+	key := iter.iter.Key()
+	ok := false
+	var obj types.Serializable
+	if iter.root.cacheableFn(key) {
+		obj, ok = iter.root.cache[string(key)]
 	}
-	(*ptr).FromBytes(iter.iter.Value())
+	if ok {
+		reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(obj))
+	} else {
+		(*ptr).FromBytes(iter.iter.Value())
+	}
 }
 func (iter *RootStoreIterator) Close() {
 	iter.iter.Close()
 }
 
-	//SetPruning(PruningOptions)
-	// Mount a store of type using the given db.
-	// If db == nil, the new store will use the CommitMultiStore db.
-	//MountStoreWithDB(key StoreKey, typ StoreType, db dbm.DB)
-	// Load the latest persisted version.  Called once after all
-	// calls to Mount*Store() are complete.
-	//LoadLatestVersion() error
+//SetPruning(PruningOptions)
+// Mount a store of type using the given db.
+// If db == nil, the new store will use the CommitMultiStore db.
+//MountStoreWithDB(key StoreKey, typ StoreType, db dbm.DB)
+// Load the latest persisted version.  Called once after all
+// calls to Mount*Store() are complete.
+//LoadLatestVersion() error
