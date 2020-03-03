@@ -2,15 +2,20 @@
 #include "cppbtree.h"
 #include <string.h>
 #include <stdint.h>
+#include <iostream>
+using namespace std;
 
+// averagely each 16-byte leaf costs 22 bytes in b-tree
 
 struct mystr {
 	union {
 		char bytes[8];
 		std::string *ptr;
+		int64_t i64;
 	} payload;
 	const char* data() const;
 	int size() const;
+	void reset();
 	mystr(char* key, int key_len);
 	mystr();
 	mystr(const mystr& other);
@@ -21,16 +26,24 @@ struct mystr {
 	bool operator<(const mystr& other) const;
 };
 
+// 00    pointer
+// 01/11 8-byte string
+// 10    8-byte string
+
 const char* mystr::data() const {
-	if(this->payload.bytes[0]%2==1) {
+	if((this->payload.bytes[0]&3)!=0) {
 		return this->payload.bytes;
 	} else {
 		return (const char*)(this->payload.ptr->data());
 	}
 }
 
+void mystr::reset() {
+	this->payload.i64=-1;
+}
+
 int mystr::size() const {
-	if(this->payload.bytes[0]%2==1) {
+	if((this->payload.bytes[0]&3)!=0) {
 		return 8;
 	} else {
 		return this->payload.ptr->size();
@@ -38,12 +51,13 @@ int mystr::size() const {
 }
 
 mystr::mystr() {
-	this->payload.ptr = nullptr;
+	this->reset();
 }
 
 mystr::mystr(char* key, int key_len) {
-	if(key[0]%2==1 && key_len==8) {
-		memcpy(this->payload.bytes, key, 8);
+	if((key[0]&3)!=0 && key_len==8) {
+		//memcpy(this->payload.bytes, key, 8);
+		this->payload.i64=*((int64_t*)key);
 	} else {
 		std::string* ptr = new std::string(key, key_len);
 		this->payload.ptr = ptr;
@@ -53,8 +67,9 @@ mystr::mystr(char* key, int key_len) {
 mystr::mystr(const mystr& other) {
 	const char* key = other.data();
 	int key_len = other.size();
-	if(key[0]%2==1 && key_len==8) {
-		memcpy(this->payload.bytes, key, 8);
+	if((key[0]&3)!=0 && key_len==8) {
+		//memcpy(this->payload.bytes, key, 8);
+		this->payload.i64=*((int64_t*)key);
 	} else {
 		std::string* ptr = new std::string(key, key_len);
 		this->payload.ptr = ptr;
@@ -65,13 +80,14 @@ mystr& mystr::operator=(const mystr& other) {
 	if (&other == this) {
 		return *this;
 	}
-	if(this->payload.bytes[0]%2==0) {
+	if((this->payload.bytes[0]&3)==0) {
 		delete this->payload.ptr;
 	}
 	const char* key = other.data();
 	int key_len = other.size();
-	if(key[0]%2==1 && key_len==8) {
-		memcpy(this->payload.bytes, key, 8);
+	if((key[0]&3)!=0 && key_len==8) {
+		//memcpy(this->payload.bytes, key, 8);
+		this->payload.i64=*((int64_t*)key);
 	} else {
 		std::string* ptr = new std::string(key, key_len);
 		this->payload.ptr = ptr;
@@ -81,46 +97,50 @@ mystr& mystr::operator=(const mystr& other) {
 
 mystr::mystr(mystr&& other) {
 	this->payload = other.payload;
-	other.payload.ptr = nullptr;
+	other.reset();
 }
 
 mystr& mystr::operator=(mystr&& other) {
 	if (&other == this) {
 		return *this;
 	}
-	if(this->payload.bytes[0]%2==0) {
+	if((this->payload.bytes[0]&3)==0) {
 		delete this->payload.ptr;
 	}
 	this->payload = other.payload;
-	other.payload.ptr = nullptr;
+	other.reset();
 	return *this;
 }
 
 mystr::~mystr() {
-	if(this->payload.bytes[0]%2==0) {
+	if((this->payload.bytes[0]&3)==0) {
 		delete this->payload.ptr;
 	}
 }
 
 bool mystr::operator<(const mystr& other) const {
-	if(this->payload.bytes[0]%2==1 && other.payload.bytes[0]%2==1) {
-		for(int i=0; i<8; i++) {
-			if(this->payload.bytes[i] < other.payload.bytes[i]) {
-				return true;
-			}
-			if(this->payload.bytes[i] > other.payload.bytes[i]) {
-				return false;
-			}
-		}
-		return false;
+	if((this->payload.bytes[0]&3)!=0 && (other.payload.bytes[0]&3)!=0) {
+		// change little-endian to big-endian
+		uint64_t a = __builtin_bswap64(uint64_t(this->payload.i64));
+		uint64_t b = __builtin_bswap64(uint64_t(other.payload.i64));
+		return a<b;
+		//for(int i=0; i<8; i++) {
+		//	if(this->payload.bytes[i] < other.payload.bytes[i]) {
+		//		return true;
+		//	}
+		//	if(this->payload.bytes[i] > other.payload.bytes[i]) {
+		//		return false;
+		//	}
+		//}
+		//return false;
 	}
 
 	std::string a(this->payload.bytes, 8);
-	if(this->payload.bytes[0]%2==1) {
+	if((this->payload.bytes[0]&3)==0) {
 		a = *(this->payload.ptr);
 	}
 	std::string b(other.payload.bytes, 8);
-	if(other.payload.bytes[0]%2==1) {
+	if((other.payload.bytes[0]&3)==0) {
 		b = *(other.payload.ptr);
 	}
 	return a<b;
