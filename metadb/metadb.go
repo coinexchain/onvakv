@@ -2,7 +2,6 @@ package metadb
 
 import (
 	"encoding/binary"
-	"math"
 
 	dbm "github.com/tendermint/tm-db"
 
@@ -35,21 +34,45 @@ type MetaDBWithTMDB struct {
 
 var _ types.MetaDB = (*MetaDBWithTMDB)(nil)
 
+func NewMetaDB(kvdb dbm.DB) *MetaDBWithTMDB {
+	return &MetaDBWithTMDB{kvdb: kvdb, batch: kvdb.NewBatch()}
+}
+
+func (db *MetaDBWithTMDB) Close() {
+	db.kvdb.Close()
+}
+
 func (db *MetaDBWithTMDB) ReloadFromKVDB() {
+	db.currHeight         = 0
+	db.lastPrunedTwig     = 0
+	db.maxSerialNum       = 0
+	db.oldestActiveTwigID = 0
+	db.activeEntryCount   = 0
+
 	bz := db.kvdb.Get([]byte{ByteCurrHeight})
-	db.currHeight = int64(binary.LittleEndian.Uint64(bz))
+	if bz != nil {
+		db.currHeight = int64(binary.LittleEndian.Uint64(bz))
+	}
 
 	bz = db.kvdb.Get([]byte{ByteLastPrunedTwig})
-	db.lastPrunedTwig = int64(binary.LittleEndian.Uint64(bz))
+	if bz != nil {
+		db.lastPrunedTwig = int64(binary.LittleEndian.Uint64(bz))
+	}
 
 	bz = db.kvdb.Get([]byte{ByteMaxSerialNum})
-	db.maxSerialNum = int64(binary.LittleEndian.Uint64(bz))
+	if bz != nil {
+		db.maxSerialNum = int64(binary.LittleEndian.Uint64(bz))
+	}
 
 	bz = db.kvdb.Get([]byte{ByteOldestActiveTwigID})
-	db.oldestActiveTwigID = int64(binary.LittleEndian.Uint64(bz))
+	if bz != nil {
+		db.oldestActiveTwigID = int64(binary.LittleEndian.Uint64(bz))
+	}
 
 	bz = db.kvdb.Get([]byte{ByteActiveEntryCount})
-	db.activeEntryCount = int64(binary.LittleEndian.Uint64(bz))
+	if bz != nil {
+		db.activeEntryCount = int64(binary.LittleEndian.Uint64(bz))
+	}
 }
 
 func (db *MetaDBWithTMDB) Commit() {
@@ -89,7 +112,10 @@ func (db *MetaDBWithTMDB) SetTwigMtFileSize(size int64) {
 
 func (db *MetaDBWithTMDB) GetTwigMtFileSize() int64 {
 	bz := db.kvdb.Get([]byte{ByteTwigMtFileSize})
-	return int64(binary.LittleEndian.Uint64(bz))
+	if bz != nil {
+		return int64(binary.LittleEndian.Uint64(bz))
+	}
+	return 0
 }
 
 func (db *MetaDBWithTMDB) SetEntryFileSize(size int64) {
@@ -100,7 +126,10 @@ func (db *MetaDBWithTMDB) SetEntryFileSize(size int64) {
 
 func (db *MetaDBWithTMDB) GetEntryFileSize() int64 {
 	bz := db.kvdb.Get([]byte{ByteEntryFileSize})
-	return int64(binary.LittleEndian.Uint64(bz))
+	if bz != nil {
+		return int64(binary.LittleEndian.Uint64(bz))
+	}
+	return 0
 }
 
 func (db *MetaDBWithTMDB) setTwigHeight(twigID int64, height int64) {
@@ -116,7 +145,7 @@ func (db *MetaDBWithTMDB) GetTwigHeight(twigID int64) int64 {
 	binary.LittleEndian.PutUint64(buf[:], uint64(twigID))
 	bz := db.kvdb.Get(append([]byte{ByteTwigHeight}, buf[:]...))
 	if len(bz) == 0 {
-		return math.MinInt64
+		return -1
 	}
 	return int64(binary.LittleEndian.Uint64(bz))
 }
