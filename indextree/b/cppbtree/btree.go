@@ -15,12 +15,12 @@ import (
 )
 
 type Enumerator struct {
-	tree    unsafe.Pointer
-	iter    unsafe.Pointer
+	tree    C.size_t
+	iter    C.size_t
 }
 
 type Tree struct {
-	ptr   unsafe.Pointer
+	ptr   C.size_t
 }
 
 func TreeNew(_ func(a, b []byte) int) *Tree {
@@ -57,19 +57,27 @@ func (tree *Tree) Get(key []byte) (uint64, bool) {
 	return uint64(value), ok!=0
 }
 
-func (tree *Tree) Seek(key []byte) (*Enumerator, error) {
+func (tree *Tree) Seek(key []byte) (*Enumerator, bool) {
 	keydata := (*C.char)(unsafe.Pointer(&key[0]))
+	var is_equal C.int
 	e := &Enumerator{
 		tree:  tree.ptr,
-		iter: C.cppbtree_seek(tree.ptr, keydata, C.int(len(key))),
+		iter: C.cppbtree_seek(tree.ptr, keydata, C.int(len(key)), &is_equal),
 	}
-	return e, nil
+	if is_equal == 0 {
+		return e, false
+	}
+	return e, true
 }
 
-func (tree *Tree) SeekFirst(key []byte) (*Enumerator, error) {
+func (tree *Tree) SeekFirst() (*Enumerator, error) {
+	var is_empty C.int
 	e := &Enumerator{
-		tree:  tree.ptr,
-		iter: C.cppbtree_seekfirst(tree.ptr),
+		tree: tree.ptr,
+		iter: C.cppbtree_seekfirst(tree.ptr, &is_empty),
+	}
+	if is_empty != 0 {
+		return nil, io.EOF
 	}
 	return e, nil
 }
@@ -79,6 +87,9 @@ func (e *Enumerator) Close() {
 }
 
 func (e *Enumerator) Next() (k []byte, v uint64, err error) {
+	if e.tree == 0 { // this Enumerator has been invalidated
+		return nil, 0, io.EOF
+	}
 	res := C.iter_next(e.tree, e.iter)
 	v = uint64(res.value)
 	err = nil
@@ -90,13 +101,20 @@ func (e *Enumerator) Next() (k []byte, v uint64, err error) {
 }
 
 func (e *Enumerator) Prev() (k []byte, v uint64, err error) {
-	res := C.iter_prev(e.tree, e.iter)
+	if e.tree == 0 { // this Enumerator has been invalidated
+		return nil, 0, io.EOF
+	}
+	var before_begin C.int
+	res := C.iter_prev(e.tree, e.iter, &before_begin)
 	v = uint64(res.value)
 	err = nil
 	if res.is_valid == 0 {
 		err = io.EOF
 	}
 	k = C.GoBytes(res.key, res.key_len)
+	if before_begin != 0 {
+		e.tree = 0 // make this Enumerator invalid
+	}
 	return
 }
 

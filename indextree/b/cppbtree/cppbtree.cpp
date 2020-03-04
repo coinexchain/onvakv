@@ -149,16 +149,16 @@ bool mystr::operator<(const mystr& other) const {
 typedef btree::btree_map<mystr, uint64_t> BTree;
 typedef BTree::iterator Iter;
 
-void* cppbtree_new() {
+size_t cppbtree_new() {
 	BTree* bt = new BTree();
-	return (void*)bt;
+	return (size_t)bt;
 }
-void  cppbtree_delete(void* tree) {
+void  cppbtree_delete(size_t tree) {
 	BTree* bt = (BTree*)tree;
 	delete bt;
 }
 
-uint64_t cppbtree_put_new_and_get_old(void* tree, char* key, int key_len, uint64_t value, int *oldExist) {
+uint64_t cppbtree_put_new_and_get_old(size_t tree, char* key, int key_len, uint64_t value, int *oldExist) {
 	mystr keyStr(key, key_len);
 	BTree* bt = (BTree*)tree;
 	Iter iter = bt->find(keyStr); 
@@ -174,17 +174,17 @@ uint64_t cppbtree_put_new_and_get_old(void* tree, char* key, int key_len, uint64
 	}
 }
 
-void  cppbtree_set(void* tree, char* key, int key_len, uint64_t value) {
+void  cppbtree_set(size_t tree, char* key, int key_len, uint64_t value) {
 	mystr keyStr(key, key_len);
 	BTree* bt = (BTree*)tree;
 	(*bt)[keyStr] = value;
 }
-void  cppbtree_erase(void* tree, char* key, int key_len) {
+void  cppbtree_erase(size_t tree, char* key, int key_len) {
 	mystr keyStr(key, key_len);
 	BTree* bt = (BTree*)tree;
 	bt->erase(keyStr);
 }
-uint64_t cppbtree_get(void* tree, char* key, int key_len, int* ok) {
+uint64_t cppbtree_get(size_t tree, char* key, int key_len, int* ok) {
 	mystr keyStr(key, key_len);
 	BTree* bt = (BTree*)tree;
 	Iter iter = bt->find(keyStr);
@@ -197,42 +197,75 @@ uint64_t cppbtree_get(void* tree, char* key, int key_len, int* ok) {
 	}
 }
 
-void* cppbtree_seek(void* tree, char* key, int key_len) {
+size_t cppbtree_seek(size_t tree, char* key, int key_len, int* is_equal) {
 	Iter* iter = new Iter();
 	mystr keyStr(key, key_len);
 	BTree* bt = (BTree*)tree;
-	*iter = bt->find(keyStr);
-	return (void*)iter;
-}
-void* cppbtree_seekfirst(void* tree) {
-	Iter* iter = new Iter();
-	BTree* bt = (BTree*)tree;
-	*iter = bt->begin();
-	return (void*)iter;
+	*iter = bt->lower_bound(keyStr);
+	if((*iter) == bt->end()) {
+		*is_equal = 0;
+		return (size_t)iter;
+	}
+	if(keyStr < (*iter)->first) {
+		*is_equal = 0;
+		return (size_t)iter;
+	}
+	*is_equal = 1;
+	return (size_t)iter;
 }
 
-KVPair iter_next(void* tree, void* ptr) {
+size_t cppbtree_seekfirst(size_t tree, int *is_empty) {
+	Iter* iter = new Iter();
+	BTree* bt = (BTree*)tree;
+	if(bt->size() == 0) {
+		*is_empty = 1;
+		return 0;
+	} else {
+		*is_empty = 0;
+		*iter = bt->begin();
+		return (size_t)iter;
+	}
+}
+
+KVPair iter_next(size_t tree, size_t iter_ptr) {
 	KVPair res;
 	BTree* bt = (BTree*)tree;
-	Iter& iter = *((Iter*)ptr);
-	res.key = (void*)iter->first.data();
-	res.value = iter->second;
-	res.key_len = iter->first.size();
+	Iter& iter = *((Iter*)iter_ptr);
 	res.is_valid = (bt->end()==iter)? 0 : 1;
+	if(res.is_valid == 0) {
+		res.key = nullptr;
+		res.key_len = 0;
+		res.value = 0;
+		return res;
+	}
+	res.key = (void*)iter->first.data();
+	res.key_len = iter->first.size();
+	res.value = iter->second;
 	iter.increment();
 	return res;
 }
-KVPair iter_prev(void* tree, void* ptr) {
+KVPair iter_prev(size_t tree, size_t iter_ptr, int* before_begin) {
 	KVPair res;
 	BTree* bt = (BTree*)tree;
-	Iter& iter = *((Iter*)ptr);
-	res.key = (void*)iter->first.data();
-	res.value = iter->second;
-	res.key_len = iter->first.size();
+	Iter& iter = *((Iter*)iter_ptr);
 	res.is_valid = (bt->end()==iter)? 0 : 1;
-	iter.decrement();
+	if(res.is_valid == 0) {
+		res.key = nullptr;
+		res.key_len = 0;
+		res.value = 0;
+		return res;
+	}
+	res.key = (void*)iter->first.data();
+	res.key_len = iter->first.size();
+	res.value = iter->second;
+	if(bt->begin()==iter) {
+		*before_begin = 1;
+	} else {
+		*before_begin = 0;
+		iter.decrement();
+	}
 	return res;
 }
-void  iter_delete(void* ptr) {
-	delete (Iter*)ptr;
+void  iter_delete(size_t iter_ptr) {
+	delete (Iter*)iter_ptr;
 }
