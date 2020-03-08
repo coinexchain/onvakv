@@ -158,6 +158,11 @@ void  cppbtree_delete(size_t tree) {
 	delete bt;
 }
 
+uint64_t cppbtree_size(size_t tree) {
+	BTree* bt = (BTree*)tree;
+	return bt->size();
+}
+
 uint64_t cppbtree_put_new_and_get_old(size_t tree, char* key, int key_len, uint64_t value, int *oldExist) {
 	mystr keyStr(key, key_len);
 	BTree* bt = (BTree*)tree;
@@ -248,16 +253,17 @@ KVPair iter_prev(size_t tree, size_t iter_ptr, int* before_begin) {
 	KVPair res;
 	BTree* bt = (BTree*)tree;
 	Iter& iter = *((Iter*)iter_ptr);
-	res.is_valid = (bt->end()==iter)? 0 : 1;
-	if(res.is_valid == 0) {
+	if(bt->end()==iter) {
 		res.key = nullptr;
 		res.key_len = 0;
 		res.value = 0;
+		iter.decrement();
 		return res;
 	}
 	res.key = (void*)iter->first.data();
 	res.key_len = iter->first.size();
 	res.value = iter->second;
+	res.is_valid = 1;
 	if(bt->begin()==iter) {
 		*before_begin = 1;
 	} else {

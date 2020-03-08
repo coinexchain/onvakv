@@ -15,6 +15,7 @@ extern "C" {
 
 	size_t cppbtree_new();
 	void  cppbtree_delete(size_t tree);
+	uint64_t cppbtree_size(size_t tree);
 
 	uint64_t cppbtree_put_new_and_get_old(size_t tree, char* key, int key_len, uint64_t value, int *ok);
 

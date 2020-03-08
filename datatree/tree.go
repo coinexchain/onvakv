@@ -44,7 +44,7 @@ type Twig struct {
 	FirstEntryPos  int64
 }
 
-func init() {
+func Init() {
 	NullTwig.FirstEntryPos = -1
 	for i := 0; i < 256; i++ {
 		NullTwig.activeBits[i] = 0
