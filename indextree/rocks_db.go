@@ -14,6 +14,7 @@ import (
 // We use rocksdb's customizable compact filter to prune old records
 type HeightCompactionFilter struct {
 	pruneHeight uint64
+	pruneEnable bool
 }
 
 func (f *HeightCompactionFilter) Name() string {
@@ -27,7 +28,7 @@ func (f *HeightCompactionFilter) Filter(level int, key, val []byte) (remove bool
 	}
 	start := len(key) - 8
 	h := binary.BigEndian.Uint64(key[start:])
-	if f.pruneHeight > h {
+	if f.pruneEnable && f.pruneHeight > h {
 		return true, nil
 	} else {
 		return false, val
@@ -85,10 +86,11 @@ func (db *RocksDB) SetPruneHeight(h uint64) {
 	if db.filter.pruneHeight < h {
 		db.filter.pruneHeight = h
 	}
+	db.filter.pruneEnable = true
 }
 
-func (db *RocksDB) GetPruneHeight() uint64 {
-	return db.filter.pruneHeight
+func (db *RocksDB) GetPruneHeight() (uint64, bool) {
+	return db.filter.pruneHeight, db.filter.pruneEnable
 }
 
 // Implements DB.

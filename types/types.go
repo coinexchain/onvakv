@@ -27,7 +27,7 @@ type UpdateTask struct {
 }
 
 type IndexTree interface {
-	Init(dirname string, repFn func(string)) error
+	Init(dirname string, repFn func([]byte)) error
 	BeginWrite(height int64)
 	EndWrite()
 	Iterator(start, end []byte) Iterator

@@ -1,6 +1,7 @@
 package indextree
 
 import (
+	//"fmt"
 	"bytes"
 	"encoding/binary"
 	"io"
@@ -63,7 +64,9 @@ func (iter *ForwardIterMem) Value() uint64 {
 }
 func (iter *ForwardIterMem) Close() {
 	iter.tree.mtx.RUnlock() // It was locked when iter was created
-	iter.enumerator.Close()
+	if iter.enumerator != nil {
+		iter.enumerator.Close()
+	}
 }
 
 func (iter *BackwardIterMem) Domain() ([]byte, []byte) {
@@ -91,7 +94,9 @@ func (iter *BackwardIterMem) Value() uint64 {
 }
 func (iter *BackwardIterMem) Close() {
 	iter.tree.mtx.RUnlock() // It was locked when iter was created
-	iter.enumerator.Close()
+	if iter.enumerator != nil {
+		iter.enumerator.Close()
+	}
 }
 
 /* ============================
@@ -114,11 +119,21 @@ type NVTreeMem struct {
 
 var _ types.IndexTree = (*NVTreeMem)(nil)
 
-func NewNVTreeMem(entryCountLimit int) *NVTreeMem {
+func NewNVTreeMem() *NVTreeMem {
 	btree := b.TreeNew(bytes.Compare)
 	return &NVTreeMem{
 		bt: btree,
 	}
+}
+
+func (tree *NVTreeMem) Close() {
+	if tree.batch != nil {
+		tree.batch.Close()
+	}
+	if tree.rocksdb != nil {
+		tree.rocksdb.Close()
+	}
+	tree.bt.Close()
 }
 
 // Load the RocksDB and use its up-to-date records to initialize the in-memory B-Tree.
@@ -142,7 +157,7 @@ func (tree *NVTreeMem) Init(dirname string, repFn func([]byte)) (err error) {
 		}
 		if bytes.Equal(k[len(k)-8:], []byte{255, 255, 255, 255, 255, 255, 255, 255}) {
 			//write the up-to-date value
-			tree.bt.Set(k[:len(k)-8], binary.BigEndian.Uint64(v))
+			tree.bt.Set(k[:len(k)-8], binary.LittleEndian.Uint64(v))
 		}
 		iter.Next()
 	}
@@ -185,13 +200,13 @@ func (tree *NVTreeMem) Set(k []byte, v uint64) {
 	newK = append(newK, tree.currHeight[:]...)
 	var buf [8]byte
 	if oldVExists {
-		binary.BigEndian.PutUint64(buf[:], oldV)
+		binary.LittleEndian.PutUint64(buf[:], oldV)
 		tree.batch.Set(newK, buf[:]) // write a historical value
 	} else {
 		tree.batch.Set(newK, []byte{}) // write a historical empty value
 	}
 
-	binary.BigEndian.PutUint64(buf[:], v)
+	binary.LittleEndian.PutUint64(buf[:], v)
 	binary.BigEndian.PutUint64(newK[len(newK)-8:], math.MaxUint64)
 	tree.batch.Set(newK, buf[:]) // write the up-to-date value
 }
@@ -208,7 +223,7 @@ func (tree *NVTreeMem) Get(k []byte) (uint64, bool) {
 
 // Get the position of k, at the specified height.
 func (tree *NVTreeMem) GetAtHeight(k []byte, height uint64) (position uint64, ok bool) {
-	if height <= tree.rocksdb.GetPruneHeight() {
+	if h, enable := tree.rocksdb.GetPruneHeight(); enable && height <= h {
 		return 0, false
 	}
 	newK := make([]byte, len(k)+8)
@@ -230,7 +245,7 @@ func (tree *NVTreeMem) GetAtHeight(k []byte, height uint64) (position uint64, ok
 		ok = false
 	} else {
 		ok = true
-		position = binary.BigEndian.Uint64(v)
+		position = binary.LittleEndian.Uint64(v)
 	}
 	return
 }
@@ -248,7 +263,7 @@ func (tree *NVTreeMem) Delete(k []byte) {
 	tree.bt.Delete(k)
 
 	var buf [8]byte
-	binary.BigEndian.PutUint64(buf[:], oldV)
+	binary.LittleEndian.PutUint64(buf[:], oldV)
 	newK := make([]byte, 0, len(k)+8)
 	newK = append(newK, k...)
 	newK = append(newK, tree.currHeight[:]...)
@@ -285,9 +300,11 @@ func (tree *NVTreeMem) ReverseIterator(start, end []byte) Iterator {
 		iter.err = io.EOF
 		return iter
 	}
-	iter.enumerator, _ = tree.bt.Seek(end)
-	//now iter.enumerator >= k, we want end is exclusive
-	iter.enumerator.Prev()
+	var ok bool
+	iter.enumerator, ok = tree.bt.Seek(end)
+	if ok { // [start, end) end is exclusive
+		iter.enumerator.Prev()
+	}
 	iter.Next() //fill key, value, err
 	return iter
 }

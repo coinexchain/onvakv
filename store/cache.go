@@ -263,9 +263,10 @@ func (cs *CacheStore) ReverseIterator(start, end []byte) types.ObjIterator {
 		iter.err = io.EOF
 		return iter
 	}
-	iter.enumerator, _ = cs.bt.Seek(end)
-	//now iter.enumerator >= k, we want end is exclusive
-	iter.enumerator.Prev()
+	iter.enumerator, ok = cs.bt.Seek(end)
+	if ok { // [start, end) end is exclusive
+		iter.enumerator.Prev()
+	}
 	iter.Next() //fill key, value, err
 	return iter
 }
