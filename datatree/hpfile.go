@@ -33,7 +33,7 @@ func NewHPFile(blockSize int, dirName string) (HPFile, error) {
 		}
 		twoParts := strings.Split(fileInfo.Name(), "-")
 		if len(twoParts) != 2 {
-			return res, fmt.Errorf("%s does not match the pattern 'FileId-BlockSize'", fileInfo.Name)
+			return res, fmt.Errorf("%s does not match the pattern 'FileId-BlockSize'", fileInfo.Name())
 		}
 		id, err := strconv.ParseInt(twoParts[0], 10, 31)
 		if err != nil {
@@ -60,10 +60,19 @@ func NewHPFile(blockSize int, dirName string) (HPFile, error) {
 			return res, err
 		}
 	}
+	if len(idList) == 0 {
+		fname := fmt.Sprintf("%s/%d-%d", dirName, 0, blockSize)
+		var err error
+		res.fileMap[0], err = os.OpenFile(fname, os.O_RDWR|os.O_CREATE, 0700)
+		if err != nil {
+			return res, err
+		}
+	}
 	return res, nil
 }
 
 func (hpf *HPFile) Size() int64 {
+	//fmt.Printf("%#v %d\n", hpf.fileMap, hpf.largestID)
 	f := hpf.fileMap[hpf.largestID]
 	size, err := f.Seek(0, os.SEEK_END)
 	if err != nil {
@@ -73,7 +82,7 @@ func (hpf *HPFile) Size() int64 {
 }
 
 func (hpf *HPFile) Truncate(size int64) error {
-	for size > int64(hpf.largestID+1)*int64(hpf.blockSize) {
+	for size < int64(hpf.largestID)*int64(hpf.blockSize) {
 		f := hpf.fileMap[hpf.largestID]
 		err := f.Close()
 		if err != nil {
@@ -87,8 +96,17 @@ func (hpf *HPFile) Truncate(size int64) error {
 		delete(hpf.fileMap, hpf.largestID)
 		hpf.largestID--
 	}
-	f := hpf.fileMap[hpf.largestID]
-	return f.Truncate(size)
+	size -= int64(hpf.largestID)*int64(hpf.blockSize)
+	err := hpf.fileMap[hpf.largestID].Close()
+	if err != nil {
+		return err
+	}
+	fname := fmt.Sprintf("%s/%d-%d", hpf.dirName, hpf.largestID, hpf.blockSize)
+	hpf.fileMap[hpf.largestID], err = os.OpenFile(fname, os.O_RDWR, 0700)
+	if err != nil {
+		return err
+	}
+	return hpf.fileMap[hpf.largestID].Truncate(size)
 }
 
 func (hpf *HPFile) Sync() error {
@@ -119,9 +137,11 @@ func (hpf *HPFile) ReadAt(buf []byte, off int64) error {
 func (hpf *HPFile) Append(bufList [][]byte) (int64, error) {
 	f := hpf.fileMap[hpf.largestID]
 	size, err := f.Seek(0, os.SEEK_END)
+	//fmt.Printf("size after Seek: %d\n", size)
 	if err != nil {
 		return 0, err
 	}
+	startPos := int64(hpf.largestID*hpf.blockSize) + size
 	totalLen := 0
 	for _, buf := range bufList {
 		_, err = f.Write(buf)
@@ -147,9 +167,8 @@ func (hpf *HPFile) Append(bufList [][]byte) (int64, error) {
 			}
 		}
 		hpf.fileMap[hpf.largestID] = f
-		size = overflowByteCount
 	}
-	return int64(hpf.largestID*hpf.blockSize) + size, nil
+	return startPos, nil
 }
 
 func (hpf *HPFile) PruneHead(off int64) error {
