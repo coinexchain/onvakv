@@ -17,24 +17,25 @@ func NewTwigMtFile(blockSize int, dirName string) (res TwigMtFile, err error) {
 	return
 }
 
-const TwigMtSize = 12 + 4095*36
+const TwigMtEntryCount = 4095
+const TwigMtSize = 12 + TwigMtEntryCount*36
 
 func (tf *TwigMtFile) AppendTwig(mtree [][32]byte, firstEntryPos int64) {
-	var buf [36]byte
-	binary.LittleEndian.PutUint64(buf[:8], uint64(firstEntryPos))
+	if len(mtree) != TwigMtEntryCount {
+		panic(fmt.Sprintf("len(mtree) != %d", TwigMtEntryCount))
+	}
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], uint64(firstEntryPos))
 	h := meow.New32(0)
-	h.Write(buf[:8])
-	copy(buf[8:12], h.Sum(nil))
-	_, err := tf.HPFile.Append([][]byte{buf[:12]}) // 8+4 bytes
+	h.Write(buf[:])
+	_, err := tf.HPFile.Append([][]byte{buf[:], h.Sum(nil)}) // 8+4 bytes
 	if err != nil {
 		panic(err)
 	}
 	for i := 0; i < len(mtree); i++ { // 4095 iterations
 		h = meow.New32(0)
 		h.Write(mtree[i][:])
-		copy(buf[:32], mtree[i][:])
-		copy(buf[32:], h.Sum(nil))
-		_, err := tf.HPFile.Append([][]byte{buf[:]}) // 32+4 bytes
+		_, err := tf.HPFile.Append([][]byte{mtree[i][:], h.Sum(nil)}) // 32+4 bytes
 		if err != nil {
 			panic(err)
 		}

@@ -67,12 +67,12 @@ func (h *Hasher) Run() {
 			end = len(h.jobs)
 		}
 		h.wg.Add(1)
-		go func() {
+		go func(start, end int) { //copy start and end to prevent race condition
 			for _, job := range h.jobs[start:end] {
 				job.run()
 			}
 			h.wg.Done()
-		}()
+		}(start, end)
 	}
 	h.wg.Wait()
 }
