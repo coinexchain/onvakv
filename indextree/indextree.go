@@ -8,6 +8,8 @@ import (
 	"math"
 	"sync"
 
+	dbm "github.com/tendermint/tm-db"
+
 	"github.com/coinexchain/onvakv/indextree/b"
 	"github.com/coinexchain/onvakv/types"
 )
@@ -113,7 +115,7 @@ type NVTreeMem struct {
 	bt         *b.Tree
 	isWriting  bool
 	rocksdb    *RocksDB
-	batch      *rocksDBBatch
+	batch      dbm.Batch
 	currHeight [8]byte
 }
 

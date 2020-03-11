@@ -7,30 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-//func (iter *ForwardIterMem) Domain() ([]byte, []byte) {
-//func (iter *ForwardIterMem) Valid() bool {
-//func (iter *ForwardIterMem) Next() {
-//func (iter *ForwardIterMem) Key() []byte {
-//func (iter *ForwardIterMem) Value() uint64 {
-//func (iter *ForwardIterMem) Close() {
-//func (iter *BackwardIterMem) Domain() ([]byte, []byte) {
-//func (iter *BackwardIterMem) Valid() bool {
-//func (iter *BackwardIterMem) Next() {
-//func (iter *BackwardIterMem) Key() []byte {
-//func (iter *BackwardIterMem) Value() uint64 {
-//func (iter *BackwardIterMem) Close() {
-//func NewNVTreeMem() *NVTreeMem {
-//func (tree *NVTreeMem) Init(dirname string, repFn func([]byte)) (err error) {
-//func (tree *NVTreeMem) BeginWrite(currHeight int64) {
-//func (tree *NVTreeMem) EndWrite() {
-//func (tree *NVTreeMem) Set(k []byte, v uint64) {
-//func (tree *NVTreeMem) Get(k []byte) (uint64, bool) {
-//func (tree *NVTreeMem) GetAtHeight(k []byte, height uint64) (position uint64, ok bool) {
-//func (tree *NVTreeMem) Delete(k []byte) {
-//func (tree *NVTreeMem) Iterator(start, end []byte) Iterator {
-//func (tree *NVTreeMem) ReverseIterator(start, end []byte) Iterator {
-//func (tree *NVTreeMem) SetPruneHeight(h uint64) {
-
 func mustGet(tree *NVTreeMem, key []byte) uint64 {
 	res, ok := tree.Get(key)
 	if !ok {

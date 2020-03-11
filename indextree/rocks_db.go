@@ -183,7 +183,7 @@ func (db *RocksDB) Stats() map[string]string {
 // Batch
 
 // Implements DB.
-func (db *RocksDB) NewBatch() *rocksDBBatch {
+func (db *RocksDB) NewBatch() dbm.Batch {
 	batch := gorocksdb.NewWriteBatch()
 	return &rocksDBBatch{db, batch}
 }
