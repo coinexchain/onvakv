@@ -21,6 +21,9 @@ const TwigMtEntryCount = 4095
 const TwigMtSize = 12 + TwigMtEntryCount*36
 
 func (tf *TwigMtFile) AppendTwig(mtree [][32]byte, firstEntryPos int64) {
+	if firstEntryPos < 0 {
+		panic(fmt.Sprintf("Invalid first entry position: %d", firstEntryPos))
+	}
 	if len(mtree) != TwigMtEntryCount {
 		panic(fmt.Sprintf("len(mtree) != %d", TwigMtEntryCount))
 	}

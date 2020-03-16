@@ -56,7 +56,7 @@ func EntryToBytes(entry Entry, deactivedSerialNumList []int64) []byte {
 	// if magicBytesPosList is not empty:
 	var zeroBuf [8]byte
 	for _, pos := range magicBytesPosList {
-		copy(b[pos:pos+8], zeroBuf[:]) // over-write the occurrence of magic bytes with zeros
+		copy(b[start+pos:start+pos+8], zeroBuf[:]) // over-write the occurrence of magic bytes with zeros
 	}
 	length += 4 * len(magicBytesPosList)
 	buf := make([]byte, length)
@@ -106,7 +106,7 @@ func writeEntryPayload(b []byte, entry Entry, deactivedSerialNumList []int64) {
 }
 
 func getAllPos(s, sep []byte) (allpos []int) {
-	for start, pos := 0, 0; start < len(s); start = pos + len(sep) {
+	for start, pos := 0, 0; start + len(sep) < len(s); start += pos + len(sep) {
 		pos = bytes.Index(s[start:], sep)
 		if pos == -1 {
 			return
@@ -116,7 +116,7 @@ func getAllPos(s, sep []byte) (allpos []int) {
 	return
 }
 
-func EntryFromBytes(b []byte) (*Entry, []uint64) {
+func EntryFromBytes(b []byte) (*Entry, []int64) {
 	entry := &Entry{}
 	i := 0
 
@@ -142,10 +142,10 @@ func EntryFromBytes(b []byte) (*Entry, []uint64) {
 	entry.SerialNum = int64(binary.LittleEndian.Uint64(b[i : i+8]))
 	i += 8
 
-	var deactivedSerialNumList []uint64
+	var deactivedSerialNumList []int64
 	sn := binary.LittleEndian.Uint64(b[i : i+8])
 	for sn != math.MaxUint64 {
-		deactivedSerialNumList = append(deactivedSerialNumList, sn)
+		deactivedSerialNumList = append(deactivedSerialNumList, int64(sn))
 		i += 8
 		sn = binary.LittleEndian.Uint64(b[i : i+8])
 	}
@@ -166,7 +166,7 @@ func getPaddingSize(length int) int {
 	}
 }
 
-func (ef *EntryFile) readMagicBytesAndLength(off int64) int {
+func (ef *EntryFile) readMagicBytesAndLength(off int64) (int, []byte) {
 	var buf [8]byte
 	err := ef.HPFile.ReadAt(buf[:], off)
 	if err != nil {
@@ -183,18 +183,20 @@ func (ef *EntryFile) readMagicBytesAndLength(off int64) int {
 	if length >= MaxEntryBytes {
 		panic("Entry to long")
 	}
-	return length
+	return length, buf[:4]
 }
 
 func (ef *EntryFile) SkipEntry(off int64) int64 {
-	length := ef.readMagicBytesAndLength(off)
+	length, _ := ef.readMagicBytesAndLength(off)
 	paddingSize := getPaddingSize(length)
 	nextPos := off + 8 /*magicbytes*/ + 4 /*length*/ + int64(length) + 4 /*checksum*/ + int64(paddingSize)
 	return nextPos
 }
 
-func (ef *EntryFile) ReadEntry(off int64) (*Entry, []uint64, int64) {
-	length := ef.readMagicBytesAndLength(off)
+func (ef *EntryFile) ReadEntry(off int64) (*Entry, []int64, int64) {
+	length, lenBytes := ef.readMagicBytesAndLength(off)
+	h := meow.New32(0)
+	h.Write(lenBytes)
 	paddingSize := getPaddingSize(length)
 	nextPos := off + 8 /*magicbytes*/ + 4 /*length*/ + int64(length) + 4 /*checksum*/ + int64(paddingSize)
 	b := make([]byte, length+4+paddingSize)
@@ -202,7 +204,6 @@ func (ef *EntryFile) ReadEntry(off int64) (*Entry, []uint64, int64) {
 	if err != nil {
 		panic(err)
 	}
-	h := meow.New32(0)
 	h.Write(b[:length])
 	if !bytes.Equal(b[length:length+4], h.Sum(nil)) {
 		panic("Checksum Error")
@@ -211,12 +212,13 @@ func (ef *EntryFile) ReadEntry(off int64) (*Entry, []uint64, int64) {
 	for n = 0; n < length; n += 4 { // recover magic bytes in payload
 		pos := binary.LittleEndian.Uint32(b[n : n+4])
 		if pos == ^(uint32(0)) {
+			n += 4
 			break
 		}
 		if int(pos) >= MaxEntryBytes {
 			panic("Position to large")
 		}
-		copy(b[int(pos):int(pos)+8], MagicBytes[:])
+		copy(b[int(pos)+4:int(pos)+12], MagicBytes[:])
 	}
 	entry, deactivedSerialNumList := EntryFromBytes(b[n:length])
 	return entry, deactivedSerialNumList, nextPos
@@ -261,7 +263,7 @@ func (ef *EntryFile) Append(b []byte) (pos int64) {
 	h := meow.New32(0)
 	h.Write(b)
 	bb[2] = h.Sum(nil)
-	bb[3] = make([]byte, getPaddingSize(len(b))) // padding zero bytes
+	bb[3] = make([]byte, getPaddingSize(len(bb[1])+len(bb[2]))) // padding zero bytes
 	pos, err := ef.HPFile.Append(bb[:])
 	if pos%8 != 0 {
 		panic("Entries are not aligned")

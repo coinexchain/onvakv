@@ -1,10 +1,16 @@
 package datatree
 
 import (
+	"fmt"
 	"encoding/binary"
+	"math/bits"
+	"sort"
 )
 
-const FirstLevelAboveTwig int = 13
+const (
+	FirstLevelAboveTwig int = 13
+	MinPruneCount int64 = 4
+)
 
 /*
                  ____TwigRoot___                Level_12
@@ -34,6 +40,12 @@ var NullTwig Twig
 var NullMT4Twig [4096][32]byte
 var NullNodeInHigherTree [64][32]byte
 
+func CopyNullTwig() *Twig {
+	var twig Twig
+	twig = NullTwig
+	return &twig
+}
+
 type Twig struct {
 	activeBits     [256]byte
 	activeBitsMTL1 [4][32]byte
@@ -44,7 +56,7 @@ type Twig struct {
 	FirstEntryPos  int64
 }
 
-func Init() {
+func init() {
 	NullTwig.FirstEntryPos = -1
 	for i := 0; i < 256; i++ {
 		NullTwig.activeBits[i] = 0
@@ -78,10 +90,10 @@ func Init() {
 	NullTwig.syncTop(&h)
 	h.Run()
 
-	node := hash2(byte(FirstLevelAboveTwig), NullTwig.twigRoot[:], NullTwig.twigRoot[:])
+	node := hash2(byte(FirstLevelAboveTwig-1), NullTwig.twigRoot[:], NullTwig.twigRoot[:])
 	copy(NullNodeInHigherTree[FirstLevelAboveTwig][:], node)
 	for i := FirstLevelAboveTwig + 1; i < len(NullNodeInHigherTree); i++ {
-		node = hash2(byte(i), NullNodeInHigherTree[i-1][:], NullNodeInHigherTree[i-1][:])
+		node = hash2(byte(i-1), NullNodeInHigherTree[i-1][:], NullNodeInHigherTree[i-1][:])
 		copy(NullNodeInHigherTree[i][:], node)
 	}
 }
@@ -160,6 +172,10 @@ func EdgeNodesToBytes(edgeNodes []*EdgeNode) []byte {
 	const stripe = 8 + 32
 	res := make([]byte, len(edgeNodes)*stripe)
 	for i, node := range edgeNodes {
+		if len(node.Value) != 32 {
+			fmt.Printf("node.Value %#v\n", node.Value)
+			panic("len(node.Value) != 32")
+		}
 		binary.LittleEndian.PutUint64(res[i*stripe:i*stripe+8], uint64(node.Pos))
 		copy(res[i*stripe+8:(i+1)*stripe], node.Value)
 	}
@@ -171,7 +187,7 @@ func BytesToEdgeNodes(bz []byte) []*EdgeNode {
 	if len(bz)%stripe != 0 {
 		panic("Invalid byteslice length for EdgeNodes")
 	}
-	res := make([]*EdgeNode, 0, len(bz)/stripe)
+	res := make([]*EdgeNode, len(bz)/stripe)
 	for i := 0; i < len(res); i++ {
 		var value [32]byte
 		pos := binary.LittleEndian.Uint64(bz[i*stripe : i*stripe+8])
@@ -186,8 +202,10 @@ type Tree struct {
 	twigMtFile *TwigMtFile
 
 	// the nodes in high level tree (higher than twigs)
-	nodes map[NodePos][]byte
+	// this variable can be recovered from saved edge nodes and activeTwigs
+	nodes map[NodePos]*[32]byte
 
+	// these two variables can be recovered from entry file
 	activeTwigs        map[int64]*Twig
 	mtree4YoungestTwig [4096][32]byte
 
@@ -196,8 +214,12 @@ type Tree struct {
 	mtree4YTChangeStart int
 	mtree4YTChangeEnd   int
 	twigsToBeDeleted    []int64
-	deactivations       map[int64]struct{}
+	touchedPosOf512b    map[int64]struct{}
 	deactivedSNList     []int64
+}
+
+func calcMaxLevel(youngestTwigID int64) int {
+	return FirstLevelAboveTwig + 63 - bits.LeadingZeros64(uint64(youngestTwigID))
 }
 
 func (tree *Tree) GetFileSizes() (int64, int64) {
@@ -219,37 +241,52 @@ func (tree *Tree) GetActiveBit(sn int64) bool {
 	return tree.activeTwigs[twigID].getBit(int(sn & TwigMask))
 }
 
-func (tree *Tree) DeactiviateEntry(sn int64) {
+func (tree *Tree) setEntryActiviation(sn int64, active bool) {
 	twigID := sn >> TwigShift
-	tree.activeTwigs[twigID].clearBit(int(sn & TwigMask))
-	tree.deactivations[sn>>9] = struct{}{} // 9??
+	if active {
+		tree.activeTwigs[twigID].setBit(int(sn & TwigMask))
+	} else {
+		tree.activeTwigs[twigID].clearBit(int(sn & TwigMask))
+	}
+	tree.touchedPosOf512b[sn/512] = struct{}{}
 	tree.deactivedSNList = append(tree.deactivedSNList, sn)
 }
 
+func (tree *Tree) DeactiviateEntry(sn int64) {
+	tree.setEntryActiviation(sn, false)
+}
+
 func (tree *Tree) AppendEntry(entry *Entry) int64 {
+	//update youngestTwigID
 	twigID := entry.SerialNum >> TwigShift
 	tree.youngestTwigID = twigID
+	// mark this entry as valid
 	twig := tree.activeTwigs[twigID]
 	position := int(entry.SerialNum & TwigMask)
 	twig.setBit(position)
+	// record ChangeStart/ChangeEnd for endblock sync
 	if tree.mtree4YTChangeStart == -1 {
 		tree.mtree4YTChangeStart = position
 	}
 	tree.mtree4YTChangeEnd = position
 
+	// write the entry while flushing deactivedSNList
 	bz := EntryToBytes(*entry, tree.deactivedSNList)
 	tree.deactivedSNList = tree.deactivedSNList[:0] // clear its content
 	pos := tree.entryFile.Append(bz)
+	// update the corresponding leaf of merkle tree
 	idx := entry.SerialNum & TwigMask
 	copy(tree.mtree4YoungestTwig[idx][:], hash(bz))
 
-	if (entry.SerialNum & TwigMask) == TwigMask {
+	if (entry.SerialNum & TwigMask) == 0 { // when this is the first entry of current twig
+		tree.activeTwigs[twigID].FirstEntryPos = pos
+	} else if (entry.SerialNum & TwigMask) == TwigMask { // when this is the last entry of current twig
+		// write the merkle tree of youngest twig to twigMtFile
 		tree.syncMT4YoungestTwig()
 		tree.twigMtFile.AppendTwig(tree.mtree4YoungestTwig[:], twig.FirstEntryPos)
+		// allocate new twig as youngest twig
 		tree.youngestTwigID++
-		tree.activeTwigs[tree.youngestTwigID] = &Twig{}
-		*(tree.activeTwigs[tree.youngestTwigID]) = NullTwig
-		tree.activeTwigs[tree.youngestTwigID].FirstEntryPos = pos + int64(len(bz))
+		tree.activeTwigs[tree.youngestTwigID] = CopyNullTwig()
 		tree.mtree4YoungestTwig = NullMT4Twig
 	}
 	return pos
@@ -266,19 +303,38 @@ func (tree *Tree) TwigCanBePruned(twigID int64) bool {
 	return !ok
 }
 
+// Prune the twigs between startID and endID
 func (tree *Tree) PruneTwigs(startID, endID int64) []byte {
+	if endID - startID < MinPruneCount {
+		panic(fmt.Sprintf("The count of pruned twigs is too small: %d", endID-startID))
+	}
 	tree.entryFile.PruneHead(tree.twigMtFile.GetFirstEntryPos(endID))
 	tree.twigMtFile.PruneHead(endID * TwigMtSize)
+	return tree.reapNodes(startID, endID)
+}
 
-	level := FirstLevelAboveTwig
+// Remove useless nodes and reap the edge nodes
+func (tree *Tree) reapNodes(startID, endID int64) []byte {
+	if startID%2 != 0 || endID%2 != 0 {
+		panic(fmt.Sprintf("Both startID and endID must be even. Now they are: %d %d", startID, endID))
+	}
 	start := startID >> 1
 	end := endID >> 1
 	var newEdgeNodes []*EdgeNode
-	for start != 0 && end != 0 { //TODO
-		pos := Pos(level, end)
-		edgeNode := &EdgeNode{Pos: pos, Value: tree.nodes[pos]}
+	maxLevel := calcMaxLevel(tree.youngestTwigID)
+	for level := FirstLevelAboveTwig; level <= maxLevel; level++ {
+		endRound := end
+		if end%2 != 0 {
+			endRound--
+		}
+		pos := Pos(level, endRound)
+		hash, ok := tree.nodes[pos]
+		if !ok {
+			fmt.Printf("What? can not find %d-%d\n", level, end)
+		}
+		edgeNode := &EdgeNode{Pos: pos, Value: (*hash)[:]}
 		newEdgeNodes = append(newEdgeNodes, edgeNode)
-		for i := start; i < end; i++ {
+		for i := start-1; i < endRound; i++ { // minus 1 from start to cover some margin nodes
 			pos = Pos(level, i)
 			delete(tree.nodes, pos)
 		}
@@ -288,16 +344,15 @@ func (tree *Tree) PruneTwigs(startID, endID int64) []byte {
 	return EdgeNodesToBytes(newEdgeNodes)
 }
 
-func (tree *Tree) calcMaxLevel() int {
-	maxLevel := FirstLevelAboveTwig
-	for i := tree.youngestTwigID; i != 0; i = i >> 1 {
-		maxLevel++
-	}
-	return maxLevel
+func (tree *Tree) DeleteActiveTwig(twigID int64) {
+	tree.twigsToBeDeleted = append(tree.twigsToBeDeleted, twigID)
 }
 
 func (tree *Tree) EndBlock() (rootHash []byte) {
-	rootHash = tree.syncMT(tree.calcMaxLevel())
+	// sync up the merkle tree
+	rootHash = tree.syncMT()
+	// run the pending twig-deletion jobs
+	// they were not deleted earlier becuase syncMT needs their content
 	for _, twigID := range tree.twigsToBeDeleted {
 		delete(tree.activeTwigs, twigID)
 	}
@@ -307,80 +362,175 @@ func (tree *Tree) EndBlock() (rootHash []byte) {
 	return
 }
 
-func (tree *Tree) DeleteActiveTwig(twigID int64) {
-	tree.twigsToBeDeleted = append(tree.twigsToBeDeleted, twigID)
+// following functions are used for syncing up merkle tree
+func (tree *Tree) syncMT() []byte {
+	maxLevel := calcMaxLevel(tree.youngestTwigID)
+	tree.syncMT4YoungestTwig()
+	nList := tree.syncMT4ActiveBits()
+	tree.syncUpperNodes(nList)
+	tree.touchedPosOf512b = make(map[int64]struct{}) // clear the list
+	hash := tree.nodes[Pos(maxLevel, 0)]
+	return append([]byte{}, (*hash)[:]...) // copy and return the merkle root
 }
 
-func (tree *Tree) syncNodesByLevel(level int, nList map[int64]struct{}) map[int64]struct{} {
+func (tree *Tree) syncUpperNodes(nList []int64) {
+	maxLevel := calcMaxLevel(tree.youngestTwigID)
+	for level := FirstLevelAboveTwig; level <= maxLevel; level++ {
+		fmt.Printf("syncNodesByLevel: %d\n", level)
+		nList = tree.syncNodesByLevel(level, nList)
+	}
+}
+
+func maxNAtLevel(youngestTwigID int64, level int) int64 {
 	if level < FirstLevelAboveTwig {
 		panic("level is too small")
 	}
-	newList := make(map[int64]struct{})
+	shift := level - FirstLevelAboveTwig
+	maxN := youngestTwigID >> shift
+	return maxN
+}
+
+func maxNPlus1AtLevel(youngestTwigID int64, level int) int64 {
+	if level < FirstLevelAboveTwig {
+		panic("level is too small")
+	}
+	shift := level - FirstLevelAboveTwig
+	maxN := youngestTwigID >> shift
+	mask := int64((1<<shift)-1)
+	if (youngestTwigID & mask) != 0 {
+		maxN += 1
+	}
+	return maxN
+}
+
+func (tree *Tree) syncNodesByLevel(level int, nList []int64) []int64 {
+	maxN := maxNAtLevel(tree.youngestTwigID, level)
+	newList := make([]int64, 0, len(nList))
 	var h Hasher
-	if level == FirstLevelAboveTwig {
-		for i := range nList {
-			nodePos := Pos(level, i)
-			h.Add(byte(level), tree.nodes[nodePos], tree.activeTwigs[2*i].twigRoot[:], tree.activeTwigs[2*i+1].twigRoot[:])
-			newList[i/2] = struct{}{}
+	for _, i := range nList {
+		nodePos := Pos(level, i)
+		if _, ok := tree.nodes[nodePos]; !ok {
+			//fmt.Printf("Now create parent node %d-%d\n", level, i)
+			var zeroHash [32]byte
+			tree.nodes[nodePos] = &zeroHash
 		}
-	} else {
-		for i := range nList {
-			nodePos := Pos(level, i)
-			nodePosL := Pos(level, 2*i)
-			nodePosR := Pos(level, 2*i+1)
-			var nodeR []byte
-			if 2*i+1 > ((tree.youngestTwigID + 2) >> level) {
-				nodeR = append([]byte{}, NullNodeInHigherTree[level][:]...)
+		if level == FirstLevelAboveTwig {
+			left := tree.activeTwigs[2*i].twigRoot[:]
+			right := NullTwig.twigRoot[:]
+			if 2*i+1 <= tree.youngestTwigID {
+				right = tree.activeTwigs[2*i+1].twigRoot[:]
 			} else {
-				nodeR = tree.nodes[nodePosR]
+			//	fmt.Printf("Here we need a null right twig %d, youngestTwigID: %d\n", 2*i+1, tree.youngestTwigID)
 			}
-			h.Add(byte(level), tree.nodes[nodePos], tree.nodes[nodePosL], nodeR)
-			newList[i/2] = struct{}{}
+			parentNode := tree.nodes[nodePos]
+			h.Add(byte(level-1), (*parentNode)[:], left, right)
+			//fmt.Printf("left: %#v right: %#v\n", left, right)
+			//fmt.Printf("New Job: %d-%d %d- %d %d\n", level, i, level-1, 2*i, 2*i+1)
+		} else {
+			nodePosL := Pos(level-1, 2*i)
+			nodePosR := Pos(level-1, 2*i+1)
+			if _, ok := tree.nodes[nodePosL]; !ok {
+				panic(fmt.Sprintf("Failed to find the left child %d-%d %d- %d %d", level,i, level-1, 2*i, 2*i+1))
+			}
+			if _, ok := tree.nodes[nodePosR]; !ok {
+				var h [32]byte
+				copy(h[:], NullNodeInHigherTree[level][:])
+				fmt.Printf("Here we create a node %d-%d\n", level-1, 2*i+1)
+				tree.nodes[nodePosR] = &h
+				if 2*i != maxN {
+					panic("Not at the right edge, bug here")
+				}
+			}
+			parentNode := tree.nodes[nodePos]
+			nodeL := tree.nodes[nodePosL]
+			nodeR := tree.nodes[nodePosR]
+			h.Add(byte(level-1), (*parentNode)[:], (*nodeL)[:], (*nodeR)[:])
+			//fmt.Printf("left: %#v right: %#v\n", (*nodeL)[:], (*nodeR)[:])
+			//fmt.Printf("New Job: %d-%d %d- %d %d\n", level, i, level-1, 2*i, 2*i+1)
+		}
+		if len(newList) == 0 || newList[len(newList)-1] != i/2 {
+			newList = append(newList, i/2)
 		}
 	}
 	h.Run()
 	return newList
 }
 
-func (tree *Tree) syncMT4ActiveBits(nList map[int64]struct{}) map[int64]struct{} {
-	newList := make(map[int64]struct{})
+func (tree *Tree) syncMT4ActiveBits() []int64 {
+	nList := make([]int64, 0, len(tree.touchedPosOf512b))
+	for i := range tree.touchedPosOf512b {
+		nList = append(nList, i)
+	}
+	sort.Slice(nList, func(i, j int) bool {return nList[i] < nList[j]})
+
+	newList := make([]int64, 0, len(nList))
 	var h Hasher
-	for i := range nList {
-		twigID := i >> 2
+	for _, i := range nList {
+		twigID := int64(i >> 2)
 		tree.activeTwigs[twigID].syncL1(int(i&3), &h)
-		newList[i/2] = struct{}{}
+		if len(newList) == 0 || newList[len(newList)-1] != i/2 {
+			newList = append(newList, i/2)
+		}
 	}
 	h.Run()
 	nList = newList
-	newList = make(map[int64]struct{})
-	for i := range nList {
-		twigID := i >> 1
+	newList = make([]int64, 0, len(nList))
+	for _, i := range nList {
+		twigID := int64(i >> 1)
 		tree.activeTwigs[twigID].syncL2(int(i&1), &h)
-		newList[i/2] = struct{}{}
+		if len(newList) == 0 || newList[len(newList)-1] != twigID {
+			newList = append(newList, twigID)
+		}
 	}
 	h.Run()
 	nList = newList
-	for i := range nList {
-		tree.activeTwigs[i].syncL3(&h)
+	newList = make([]int64, 0, len(nList))
+	for _, twigID := range nList {
+		tree.activeTwigs[twigID].syncL3(&h)
 	}
-	newList = make(map[int64]struct{})
-	for i := range nList {
-		tree.activeTwigs[i].syncTop(&h)
-		newList[i/2] = struct{}{}
+	h.Run()
+	for _, twigID := range nList {
+		tree.activeTwigs[twigID].syncTop(&h)
+		if len(newList) == 0 || newList[len(newList)-1] != twigID/2 {
+			newList = append(newList, twigID/2)
+		}
 	}
+	h.Run()
 	return newList
 }
 
+/*         1
+     2            3
+   4   5       6     7
+ 8  9 a b    c   d  e  f
+*/
+// Sync up the merkle tree, between ChangeStart and ChangeEnd
 func (tree *Tree) syncMT4YoungestTwig() {
+	if tree.mtree4YTChangeStart == -1 {// nothing changed
+		return
+	}
 	var h Hasher
 	level := byte(0)
-	for base := 2048; base >= 2; base >>= 1 {
-		for i := tree.mtree4YTChangeStart &^ 1; i < tree.mtree4YTChangeEnd; i += 2 {
+	start, end := tree.mtree4YTChangeStart, tree.mtree4YTChangeEnd
+	for base := LeafCountInTwig; base >= 2; base >>= 1 {
+		//fmt.Printf("base: %d\n", base)
+		endRound := end
+		if end%2 == 1 {
+			endRound++
+		}
+		for j := (start &^ 1); j <= endRound && j+1 < base; j += 2 {
+			i := base + j
 			h.Add(level, tree.mtree4YoungestTwig[i/2][:], tree.mtree4YoungestTwig[i][:], tree.mtree4YoungestTwig[i+1][:])
+			//fmt.Printf("Now job: %d-%d(%d) %d(%d) %d(%d)\n", level, j/2, i/2, j, i, j+1, i+1)
 		}
 		h.Run()
-		tree.mtree4YTChangeStart >>= 1
-		tree.mtree4YTChangeEnd >>= 1
+		start >>= 1
+		end >>= 1
+		//if end%2 == 0 {
+		//	end = end/2
+		//} else {
+		//	end = end/2 + 1
+		//}
 		level++
 	}
 	tree.mtree4YTChangeStart = -1 // reset its value
@@ -388,12 +538,3 @@ func (tree *Tree) syncMT4YoungestTwig() {
 	copy(tree.activeTwigs[tree.youngestTwigID].leafMTRoot[:], tree.mtree4YoungestTwig[1][:])
 }
 
-func (tree *Tree) syncMT(maxLevel int) []byte {
-	tree.syncMT4YoungestTwig()
-	nList := tree.syncMT4ActiveBits(tree.deactivations)
-	for level := FirstLevelAboveTwig; level < maxLevel; level++ {
-		nList = tree.syncNodesByLevel(level, nList)
-	}
-	tree.deactivations = make(map[int64]struct{})
-	return append([]byte{}, tree.nodes[Pos(maxLevel, 0)]...) // return the merkle root
-}

@@ -1,8 +1,9 @@
 package datatree
 
 import (
-	"crypto/sha256"
 	"sync"
+
+	sha256 "github.com/minio/sha256-simd"
 )
 
 const (
@@ -75,4 +76,5 @@ func (h *Hasher) Run() {
 		}(start, end)
 	}
 	h.wg.Wait()
+	h.jobs = h.jobs[:0]
 }
