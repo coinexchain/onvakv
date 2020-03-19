@@ -1,10 +1,10 @@
 package datatree
 
 import (
-	"bytes"
+	"os"
+	"encoding/binary"
 	"fmt"
 	"testing"
-	"encoding/binary"
 
 	sha256 "github.com/minio/sha256-simd"
 	"github.com/stretchr/testify/assert"
@@ -211,20 +211,6 @@ func TestTreeReapNodes(t *testing.T) {
 
 }
 
-func checkMT(mt [4096][32]byte) {
-	for stripe, level := 1, byte(10); stripe <= 1024; stripe, level = stripe*2, level-1 {
-		for i := stripe; i < 2*stripe; i++ {
-			b := append(append([]byte{level}, mt[2*i][:]...), mt[2*i+1][:]...)
-			//fmt.Printf("Check %d-%d(%d) %d(%d) %d(%d)\n", level, i-stripe, i,
-			//	2*i-stripe*2, 2*i, 2*i+1-stripe*2, 2*i+1)
-			sum := sha256.Sum256(b)
-			if !bytes.Equal(mt[i][:], sum[:]) {
-				panic(fmt.Sprintf("Mismatch %d-%d %d %d", level, i, 2*i, 2*i+1))
-			}
-		}
-	}
-}
-
 func generateMT() (mt [4096][32]byte) {
 	for i := range mt {
 		for j := 0; j < 32; j+=2 {
@@ -282,27 +268,6 @@ func TestTreeSyncMT4YoungestTwig(t *testing.T) {
 	checkMT(tree.mtree4YoungestTwig)
 }
 
-func checkTwig(t *testing.T, twig *Twig) {
-	assert.Equal(t, twig.activeBitsMTL1[0], sha256.Sum256(append([]byte{8}, twig.activeBits[64*0:64*1]...)))
-	assert.Equal(t, twig.activeBitsMTL1[1], sha256.Sum256(append([]byte{8}, twig.activeBits[64*1:64*2]...)))
-	assert.Equal(t, twig.activeBitsMTL1[2], sha256.Sum256(append([]byte{8}, twig.activeBits[64*2:64*3]...)))
-	assert.Equal(t, twig.activeBitsMTL1[3], sha256.Sum256(append([]byte{8}, twig.activeBits[64*3:64*4]...)))
-	assert.Equal(t, twig.activeBitsMTL2[0], sha256.Sum256(append([]byte{9},
-		append(twig.activeBitsMTL1[0][:], twig.activeBitsMTL1[1][:]...)...)))
-	assert.Equal(t, twig.activeBitsMTL2[1], sha256.Sum256(append([]byte{9},
-		append(twig.activeBitsMTL1[2][:], twig.activeBitsMTL1[3][:]...)...)))
-	assert.Equal(t, twig.activeBitsMTL3, sha256.Sum256(append([]byte{10},
-		append(twig.activeBitsMTL2[0][:], twig.activeBitsMTL2[1][:]...)...)))
-	assert.Equal(t, twig.twigRoot, sha256.Sum256(append([]byte{11},
-		append(twig.activeBitsMTL3[:], twig.leafMTRoot[:]...)...)))
-}
-
-func checkAllTwigs(t *testing.T, tree *Tree) {
-	for _, twig := range tree.activeTwigs {
-		checkTwig(t, twig)
-	}
-}
-
 func initNTwigs(tree *Tree, n int64) {
 	tree.activeTwigs = make(map[int64]*Twig)
 	for i := int64(0); i < n; i++ {
@@ -322,7 +287,7 @@ func flipBitsEveryN(tree *Tree, n int64) {
 func TestTreeSyncMT4ActiveBits(t *testing.T) {
 	tree := &Tree{}
 	initNTwigs(tree, 7)
-	checkAllTwigs(t, tree)
+	checkAllTwigs(tree)
 
 	nList0 := []int64{0, 1, 2, 3}
 	nList1 := []int64{0, 1, 2}
@@ -333,35 +298,35 @@ func TestTreeSyncMT4ActiveBits(t *testing.T) {
 	nList := tree.syncMT4ActiveBits()
 	assert.Equal(t, nList0, nList)
 	fmt.Printf("here0 %#v\n", nList)
-	checkAllTwigs(t, tree)
+	checkAllTwigs(tree)
 
 	tree.touchedPosOf512b = make(map[int64]struct{})
 	flipBitsEveryN(tree, 600)
 	nList = tree.syncMT4ActiveBits()
 	assert.Equal(t, nList0, nList)
 	fmt.Printf("here1 %#v\n", nList)
-	checkAllTwigs(t, tree)
+	checkAllTwigs(tree)
 
 	tree.touchedPosOf512b = make(map[int64]struct{})
 	flipBitsEveryN(tree, 3011)
 	nList = tree.syncMT4ActiveBits()
 	assert.Equal(t, nList1, nList)
 	fmt.Printf("here2 %#v\n", nList)
-	checkAllTwigs(t, tree)
+	checkAllTwigs(tree)
 
 	tree.touchedPosOf512b = make(map[int64]struct{})
 	flipBitsEveryN(tree, 5000)
 	nList = tree.syncMT4ActiveBits()
 	assert.Equal(t, nList1, nList)
 	fmt.Printf("here3 %#v\n", nList)
-	checkAllTwigs(t, tree)
+	checkAllTwigs(tree)
 
 	tree.touchedPosOf512b = make(map[int64]struct{})
 	flipBitsEveryN(tree, 9001)
 	nList = tree.syncMT4ActiveBits()
 	assert.Equal(t, nList2, nList)
 	fmt.Printf("here4 %#v\n", nList)
-	checkAllTwigs(t, tree)
+	checkAllTwigs(tree)
 }
 
 func checkNodeExistence(tree *Tree, start, end int64) {
@@ -413,42 +378,6 @@ func changeTwigRoots(tree *Tree, idList []int64) []int64 {
 	return nList
 }
 
-func checkUpperNodes(tree *Tree) {
-	for pos, parentHash := range tree.nodes {
-		level := int64(pos)>>56
-		n := (int64(pos)<<8)>>8
-		//fmt.Printf("Checking %d-%d %d- %d %d\n", level, n, level-1, 2*n, 2*n+1)
-		var leftChild, rightChild [32]byte
-		if level == int64(FirstLevelAboveTwig) {
-			leftTwig, ok := tree.activeTwigs[2*n]
-			if !ok {
-				continue
-			}
-			leftChild = leftTwig.twigRoot
-			rightTwig, ok := tree.activeTwigs[2*n+1]
-			if ok {
-				rightChild = rightTwig.twigRoot
-			} else {
-				rightChild = NullTwig.twigRoot
-			}
-		} else {
-			leftChildPtr, ok := tree.nodes[Pos(int(level-1), 2*n)]
-			if !ok {
-				continue
-			}
-			rightChildPtr, ok := tree.nodes[Pos(int(level-1), 2*n+1)]
-			if !ok {
-				continue
-			}
-			leftChild, rightChild = *leftChildPtr, *rightChildPtr
-		}
-		h := sha256.Sum256(append(append([]byte{byte(level-1)}, leftChild[:]...), rightChild[:]...))
-		if !bytes.Equal(h[:], (*parentHash)[:]) {
-			fmt.Printf("left: %#v right: %#v\n", leftChild, rightChild)
-			panic(fmt.Sprintf("Mismatch at %d-%d l:%d r:%d", level, n, 2*n, 2*n+1))
-		}
-	}
-}
 
 func TestTreeSyncUpperNodes(t *testing.T) {
 	tree := &Tree{}
@@ -465,5 +394,86 @@ func TestTreeSyncUpperNodes(t *testing.T) {
 	checkUpperNodes(tree)
 	nList := changeTwigRoots(tree, []int64{81, 82, 99, 122, 123, 133, 139, 155, 166, 169, 170})
 	tree.syncUpperNodes(nList)
+}
+
+const defaultFileSize = 8*4096*32
+
+func buildTestTree(dirName string, deactSNList []int64) (*Tree, []int64, int64) {
+	tree := NewEmptyTree(defaultFileSize, dirName)
+	entry := &Entry{
+		Key:        []byte("key"),
+		Value:      []byte("value"),
+		NextKey:    []byte("nextkey"),
+		Height:     100,
+		LastHeight: 99,
+		SerialNum:  0,
+	}
+	posList := make([]int64, 0, LeafCountInTwig+10)
+	posList = append(posList, tree.AppendEntry(entry))
+
+	for i := 1; i < TwigMask; i++ {
+		entry.SerialNum = int64(i)
+		posList = append(posList, tree.AppendEntry(entry))
+	}
+	for _, sn := range deactSNList {
+		tree.DeactiviateEntry(sn)
+	}
+
+	entry.SerialNum = TwigMask
+	posList = append(posList, tree.AppendEntry(entry))
+
+	for i := 0; i < 5; i++ {
+		entry.SerialNum++
+		posList = append(posList, tree.AppendEntry(entry))
+	}
+
+	tree.EndBlock()
+	return tree, posList, entry.SerialNum
+}
+
+func TestTreeAppendEntry(t *testing.T) {
+	dirName := "./datatree"
+	os.RemoveAll(dirName)
+	os.Mkdir(dirName, 0700)
+	deactSNList := []int64{101, 999, 1002}
+	tree, posList, maxSerialNum := buildTestTree(dirName, deactSNList)
+
+	for i, pos := range posList {
+		entry, snList, _ := tree.entryFile.ReadEntry(pos)
+		assert.Equal(t, int64(i), entry.SerialNum)
+		if i == TwigMask {
+			assert.Equal(t, deactSNList, snList)
+		} else {
+			assert.Equal(t, 0, len(snList))
+		}
+	}
+
+	activeList := make([]int64, 0, maxSerialNum)
+	for i := int64(0); i <= maxSerialNum; i++ {
+		active := true
+		for j := range deactSNList {
+			if i == deactSNList[j] {
+				active = false
+			}
+		}
+		assert.Equal(t, active, tree.GetActiveBit(i))
+		if active {
+			activeList = append(activeList, i)
+		}
+	}
+
+	checkHashConsistency(tree)
+
+	assert.Equal(t, false, tree.TwigCanBePruned(0))
+	assert.Equal(t, false, tree.TwigCanBePruned(1))
+
+	entryList := tree.GetActiveEntriesInTwig(0)
+	for i, entry := range entryList {
+		assert.Equal(t, activeList[i], entry.SerialNum)
+	}
+
+	tree.Sync()
+	tree.Close()
+	os.RemoveAll(dirName)
 }
 
