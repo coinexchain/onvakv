@@ -19,6 +19,7 @@ const (
 	ByteMaxSerialNum       = byte(0x16)
 	ByteActiveEntryCount   = byte(0x17)
 	ByteOldestActiveTwigID = byte(0x18)
+	ByteIsRunning          = byte(0x19)
 )
 
 type MetaDBWithTMDB struct {
@@ -202,4 +203,30 @@ func (db *MetaDBWithTMDB) GetOldestActiveTwigID() int64 {
 
 func (db *MetaDBWithTMDB) IncrOldestActiveTwigID() {
 	db.oldestActiveTwigID++
+}
+
+func (db *MetaDBWithTMDB) GetIsRunning() bool {
+	bz := db.kvdb.Get([]byte{ByteIsRunning})
+	return len(bz) == 0 || bz[0] != 0
+}
+
+func (db *MetaDBWithTMDB) SetIsRunning(isRunning bool) {
+	if isRunning {
+		db.kvdb.SetSync([]byte{ByteIsRunning}, []byte{1})
+	} else {
+		db.kvdb.SetSync([]byte{ByteIsRunning}, []byte{0})
+	}
+}
+
+func (db *MetaDBWithTMDB) Init() {
+	db.SetIsRunning(false)
+	db.batch = db.kvdb.NewBatch()
+	db.currHeight = 0
+	db.lastPrunedTwig = -1
+	db.maxSerialNum = 0
+	db.oldestActiveTwigID = 0
+	db.activeEntryCount = 0
+	db.SetTwigMtFileSize(0)
+	db.SetEntryFileSize(0)
+	db.Commit()
 }

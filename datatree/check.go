@@ -85,7 +85,7 @@ func checkAllTwigs(tree *Tree) {
 	}
 }
 
-func checkHashConsistency(tree *Tree) {
+func CheckHashConsistency(tree *Tree) {
 	checkAllTwigs(tree)
 	checkUpperNodes(tree)
 	checkMT(tree.mtree4YoungestTwig)

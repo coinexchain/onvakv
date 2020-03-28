@@ -462,7 +462,7 @@ func TestTreeAppendEntry(t *testing.T) {
 		}
 	}
 
-	checkHashConsistency(tree)
+	CheckHashConsistency(tree)
 
 	assert.Equal(t, false, tree.TwigCanBePruned(0))
 	assert.Equal(t, false, tree.TwigCanBePruned(1))

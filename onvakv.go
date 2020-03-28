@@ -1,16 +1,401 @@
 package onvakv
 
 import (
+	"bytes"
+	//"fmt"
+	"os"
+	"math"
+	"sort"
 	"sync"
 
 	dbm "github.com/tendermint/tm-db"
 
 	"github.com/coinexchain/onvakv/datatree"
+	"github.com/coinexchain/onvakv/indextree"
+	"github.com/coinexchain/onvakv/metadb"
 	"github.com/coinexchain/onvakv/types"
 )
 
-const StartReapThres int64 = 1000 * 1000
-const ActiveEntriesToKeptEntriesRation = 3
+const (
+	defaultFileSize = 1024*1024*1024
+	StartReapThres int64 = 1000 * 1000
+	KeptEntriesToActiveEntriesRation = 3
+)
+
+type OnvaKV struct {
+	meta     types.MetaDB
+	idxTree  types.IndexTree
+	datTree  types.DataTree
+	rootHash []byte
+	k2eCache *sync.Map
+}
+
+func NewOnvaKV(dirName string) (*OnvaKV, error) {
+	_, err := os.Stat(dirName)
+	dirNotExists := os.IsNotExist(err)
+	okv := &OnvaKV{k2eCache: &sync.Map{}}
+	if dirNotExists {
+		os.Mkdir(dirName, 0700)
+	}
+
+	kvdb, err := dbm.NewGoLevelDB("meta", dirName)
+	if err != nil {
+		return nil, err
+	}
+	okv.meta = metadb.NewMetaDB(kvdb)
+
+	if dirNotExists { // Create a new database in this dir
+		okv.datTree = datatree.NewEmptyTree(defaultFileSize, dirName)
+		okv.meta.Init()
+	} else if okv.meta.GetIsRunning() { // OnvaKV is *NOT* closed properly
+		oldestActiveTwigID := okv.meta.GetOldestActiveTwigID()
+		youngestTwigID := okv.meta.GetMaxSerialNum()
+		bz := okv.meta.GetEdgeNodes()
+		edgeNodes := datatree.BytesToEdgeNodes(bz)
+		okv.datTree = datatree.RecoverTree(defaultFileSize, dirName,
+			edgeNodes, oldestActiveTwigID, youngestTwigID)
+	} else { // OnvaKV is closed properly
+		okv.datTree = datatree.LoadTree(defaultFileSize, dirName)
+	}
+
+	okv.idxTree = indextree.NewNVTreeMem()
+	err = okv.idxTree.Init(dirName, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	okv.meta.SetIsRunning(true)
+	return okv, nil
+}
+
+func (okv *OnvaKV) Close() {
+	okv.meta.SetIsRunning(false)
+	okv.idxTree.Close()
+	okv.datTree.Sync()
+	okv.datTree.Close()
+	okv.meta.Close()
+	okv.idxTree = nil
+	okv.datTree = nil
+	okv.meta = nil
+	okv.k2eCache = nil
+}
+
+type Entry = types.Entry
+type EntryX = types.EntryX
+
+func (okv *OnvaKV) GetRootHash() []byte {
+	return append([]byte{}, okv.rootHash...)
+}
+
+func (okv *OnvaKV) GetEntry(k []byte) *Entry {
+	pos, ok := okv.idxTree.Get(k)
+	if !ok {
+		return nil
+	}
+	return okv.datTree.ReadEntry(int64(pos))
+}
+
+func (okv *OnvaKV) PrepareForUpdate(k []byte) {
+	//fmt.Printf("In PrepareForUpdate we see: %s\n", string(k))
+	pos, findIt := okv.idxTree.Get(k)
+	if findIt { // The case of Change
+		//fmt.Printf("In PrepareForUpdate we update\n")
+		entry := okv.datTree.ReadEntry(int64(pos))
+		v, ok  := okv.k2eCache.Load(string(k))
+		if !ok || v == nil {
+			//fmt.Printf("Now we add entry to k2e(findIt): %s(%#v)\n", string(k), k)
+			okv.k2eCache.Store(string(k), &EntryX{
+				EntryPtr:  entry,
+				Operation: types.OpNone,
+			})
+		}
+		return
+	}
+
+	// The case of Insert
+	//fmt.Printf("Now we add entry to k2e(not-findIt): %s(%#v)\n", string(k), k)
+	okv.k2eCache.Store(string(k), &EntryX{
+		EntryPtr: &Entry{
+			Key:        k,
+			Value:      nil,
+			NextKey:    nil,
+			Height:     0,
+			LastHeight: 0,
+			SerialNum:  -1, //inserted entries has negative SerialNum
+		},
+		Operation: types.OpNone,
+	})
+
+	//fmt.Printf("In PrepareForUpdate we insert\n")
+	prevEntry := okv.getPrevEntry(k)
+	//fmt.Printf("prevEntry(%#v): %#v\n", k, prevEntry)
+	kStr := string(prevEntry.Key)
+	v, ok  := okv.k2eCache.Load(kStr)
+	if !ok || v == nil {
+		//fmt.Printf("Now we add entry to k2e(prevEntry.Key): %s(%#v)\n", kStr, prevEntry.Key)
+		okv.k2eCache.Store(kStr, &EntryX{
+			EntryPtr:  prevEntry,
+			Operation: types.OpNone,
+		})
+	}
+
+	kStr = string(prevEntry.NextKey)
+	_, ok = okv.k2eCache.Load(kStr)
+	if !ok {
+		//fmt.Printf("Now we add entry to k2e(prevEntry.NextKey): %s(%#v)\n", kStr, prevEntry.NextKey)
+		okv.k2eCache.Store(kStr, nil)
+	} else {
+		//fmt.Printf("Now we hit k2eCache: %s(%#v)\n", kStr, prevEntry.NextKey)
+	}
+}
+
+func (okv *OnvaKV) PrepareForDeletion(k []byte) (findIt bool) {
+	//fmt.Printf("In PrepareForDeletion we see: %s\n", string(k))
+	pos, findIt := okv.idxTree.Get(k)
+	if !findIt {
+		return
+	}
+
+	entry := okv.datTree.ReadEntry(int64(pos))
+	kStr := string(entry.Key)
+	v, ok := okv.k2eCache.Load(kStr)
+	if !ok || v == nil {
+		okv.k2eCache.Store(kStr, &EntryX{
+			EntryPtr:  entry,
+			Operation: types.OpNone,
+		})
+	}
+
+	prevEntry := okv.getPrevEntry(k)
+	kStr = string(prevEntry.Key)
+	v, ok = okv.k2eCache.Load(kStr)
+	if !ok || v == nil {
+		okv.k2eCache.Store(kStr, &EntryX{
+			EntryPtr:  prevEntry,
+			Operation: types.OpNone,
+		})
+	}
+
+	kStr = string(entry.NextKey)
+	_, ok = okv.k2eCache.Load(kStr)
+	if !ok {
+		okv.k2eCache.Store(kStr, nil)
+	}
+	return
+}
+
+func makeFakeEntryX(key string) *EntryX {
+	return &EntryX {
+		EntryPtr: &Entry{
+			Key:        []byte(key),
+			Value:      nil,
+			NextKey:    nil,
+			Height:     -1,
+			LastHeight: -1,
+			SerialNum:  math.MaxInt64, // fake entry has largest possible SerialNum
+		},
+		Operation: types.OpNone,
+	}
+}
+
+func (okv *OnvaKV) getPrevEntry(k []byte) *Entry {
+	iter := okv.idxTree.ReverseIterator([]byte{}, k)
+	if !iter.Valid() {
+		panic("The iterator is invalid! Missing a guard node?")
+	}
+	pos := iter.Value()
+	//fmt.Printf("In getPrevEntry: %#v %d\n", iter.Key(), iter.Value())
+	return okv.datTree.ReadEntry(int64(pos))
+}
+
+
+const (
+	MinimumTasksInGoroutine = 10
+	MaximumGoroutines       = 128
+)
+
+func (okv *OnvaKV) numOfKeptEntries() int64 {
+	return okv.meta.GetMaxSerialNum() - okv.meta.GetOldestActiveTwigID()*datatree.LeafCountInTwig
+}
+
+func (okv *OnvaKV) BeginWrite(height int64) {
+	okv.idxTree.BeginWrite(height)
+	okv.meta.SetCurrHeight(height)
+}
+
+func (okv *OnvaKV) Set(key, value []byte) {
+	//fmt.Printf("In Set we see: %s %s\n", string(key), string(value))
+	v, ok := okv.k2eCache.Load(string(key))
+	if !ok {
+		panic("Can not find entry in cache")
+	}
+	if v == nil {
+		panic("Can not change or insert at a fake entry")
+	}
+	entry := v.(*EntryX)
+	entry.EntryPtr.Value = value
+	entry.Operation = types.OpInsertOrChange
+}
+
+func (okv *OnvaKV) Delete(key []byte) {
+	//fmt.Printf("In Delete we see: %s(%#v)\n", string(key), key)
+	v, ok := okv.k2eCache.Load(string(key))
+	if !ok {
+		panic("Can not find entry in cache")
+	}
+	if v == nil {
+		panic("Can not delete a fake entry")
+	}
+	entry := v.(*EntryX)
+	entry.Operation = types.OpDelete
+}
+
+func getPrev(cachedEntries []*EntryX, i int) int {
+	var j int
+	for j = i-1; j >= 0; j-- {
+		if cachedEntries[j].Operation != types.OpDelete {
+			break
+		}
+	}
+	if j < 0 {
+		panic("Can not find previous entry")
+	}
+	return j
+}
+
+func getNext(cachedEntries []*EntryX, i int) int {
+	var j int
+	for j = i+1; j < len(cachedEntries); j++ {
+		if cachedEntries[j].Operation != types.OpDelete {
+			break
+		}
+	}
+	if j >= len(cachedEntries) {
+		panic("Can not find previous entry")
+	}
+	return j
+}
+
+func (okv *OnvaKV) update() {
+	cachedEntries := make([]*EntryX, 0, 2000)
+	okv.k2eCache.Range(func(key, value interface{}) bool {
+		if value == nil {
+			keyStr := key.(string)
+		        cachedEntries = append(cachedEntries, makeFakeEntryX(keyStr))
+		} else {
+			entryX := value.(*EntryX)
+		        cachedEntries = append(cachedEntries, entryX)
+		}
+		return true
+	})
+	sort.Slice(cachedEntries, func(i,j int) bool {
+		return bytes.Compare(cachedEntries[i].EntryPtr.Key, cachedEntries[j].EntryPtr.Key) < 0
+	})
+	// set NextKey to correct values and mark IsModified
+	for i, entryX := range cachedEntries {
+		if entryX.Operation != types.OpNone && entryX.EntryPtr.SerialNum == math.MaxInt64 {
+			panic("Operate on a fake entry")
+		}
+		if entryX.Operation == types.OpDelete {
+			entryX.IsModified = true
+			next := getNext(cachedEntries, i)
+			nextKey := cachedEntries[next].EntryPtr.Key
+			prev := getPrev(cachedEntries, i)
+			cachedEntries[prev].EntryPtr.NextKey = nextKey
+			cachedEntries[prev].IsModified = true
+		} else if entryX.Operation == types.OpInsertOrChange {
+			entryX.IsModified = true
+			next := getNext(cachedEntries, i)
+			entryX.EntryPtr.NextKey = cachedEntries[next].EntryPtr.Key
+			prev := getPrev(cachedEntries, i)
+			cachedEntries[prev].EntryPtr.NextKey = entryX.EntryPtr.Key
+			cachedEntries[prev].IsModified = true
+			//fmt.Printf("this: %s(%#v) prev %d: %s(%#v) next %d: %s(%#v)\n", entryX.EntryPtr.Key, entryX.EntryPtr.Key,
+			//	prev, cachedEntries[prev].EntryPtr.Key, cachedEntries[prev].EntryPtr.Key,
+			//	next,  cachedEntries[next].EntryPtr.Key, cachedEntries[next].EntryPtr.Key)
+		}
+	}
+	// update stored data
+	for _, entryX := range cachedEntries {
+		if !entryX.IsModified {
+			continue
+		}
+		ptr := entryX.EntryPtr
+		if entryX.Operation == types.OpDelete {
+			//fmt.Printf("Now we deactive %d for deletion\n", ptr.SerialNum)
+			okv.idxTree.Delete(ptr.Key)
+			okv.datTree.DeactiviateEntry(ptr.SerialNum)
+		} else {
+			if ptr.SerialNum >= 0 { // if this entry already exists
+				okv.datTree.DeactiviateEntry(ptr.SerialNum)
+			}
+			ptr.LastHeight = ptr.Height
+			ptr.Height = okv.meta.GetCurrHeight()
+			ptr.SerialNum = okv.meta.GetMaxSerialNum()
+			//fmt.Printf("Now SerialNum = %d for %s(%#v)\n", ptr.SerialNum, string(ptr.Key), ptr.Key)
+			okv.meta.IncrMaxSerialNum()
+			pos := okv.datTree.AppendEntry(ptr)
+			okv.idxTree.Set(ptr.Key, uint64(pos))
+		}
+	}
+}
+
+func (okv *OnvaKV) EndWrite() {
+	okv.update()
+	for okv.numOfKeptEntries() > okv.meta.GetActiveEntryCount()*KeptEntriesToActiveEntriesRation &&
+		okv.meta.GetActiveEntryCount() > StartReapThres {
+		twigID := okv.meta.GetOldestActiveTwigID()
+		entries := okv.datTree.GetActiveEntriesInTwig(twigID)
+		for _, e := range entries {
+			okv.datTree.DeactiviateEntry(e.SerialNum)
+			e.SerialNum = okv.meta.GetMaxSerialNum()
+			okv.meta.IncrMaxSerialNum()
+			pos := okv.datTree.AppendEntry(e)
+			okv.idxTree.Set(e.Key, uint64(pos))
+		}
+		okv.datTree.EvictTwig(twigID)
+		okv.meta.IncrOldestActiveTwigID()
+	}
+	okv.idxTree.EndWrite()
+	okv.rootHash = okv.datTree.EndBlock()
+	okv.k2eCache = &sync.Map{}
+
+	eS, tS := okv.datTree.GetFileSizes()
+	okv.meta.SetEntryFileSize(eS)
+	okv.meta.SetTwigMtFileSize(tS)
+	okv.meta.Commit()
+}
+
+func (okv *OnvaKV) InitGuards(startKey, endKey []byte) {
+	okv.idxTree.BeginWrite(-1)
+	okv.meta.SetCurrHeight(-1)
+
+	pos := okv.datTree.AppendEntry(&Entry{
+		Key:        startKey,
+		Value:      []byte{},
+		NextKey:    endKey,
+		Height:     -1,
+		LastHeight: -1,
+		SerialNum:  okv.meta.GetMaxSerialNum(),
+	})
+	okv.meta.IncrMaxSerialNum()
+	okv.idxTree.Set(startKey, uint64(pos))
+
+	pos = okv.datTree.AppendEntry(&Entry{
+		Key:        endKey,
+		Value:      []byte{},
+		NextKey:    endKey,
+		Height:     -1,
+		LastHeight: -1,
+		SerialNum:  okv.meta.GetMaxSerialNum(),
+	})
+	okv.meta.IncrMaxSerialNum()
+	okv.idxTree.Set(endKey, uint64(pos))
+
+	okv.idxTree.EndWrite()
+	okv.rootHash = okv.datTree.EndBlock()
+	okv.meta.Commit()
+}
 
 func (okv *OnvaKV) PruneBeforeHeight(height int64) {
 	start := okv.meta.GetLastPrunedTwig() + 1
@@ -20,220 +405,18 @@ func (okv *OnvaKV) PruneBeforeHeight(height int64) {
 		end++
 		endHeight = okv.meta.GetTwigHeight(end)
 	}
+	if end%2 != 0 { // end must be an even number
+		end--
+	}
 	if end > start {
-		edgeNodes := okv.datTree.PruneTwigs(start, end)
-		okv.meta.SetEdgeNodes(edgeNodes)
+		edgeNodesBytes := okv.datTree.PruneTwigs(start, end)
+		okv.meta.SetEdgeNodes(edgeNodesBytes)
 		for i := start; i <= end; i++ {
 			okv.meta.DeleteTwigHeight(i)
 		}
 		okv.meta.SetLastPrunedTwig(end)
 	}
-}
-
-type OnvaKV struct {
-	meta     types.MetaDB
-	idxTree  types.IndexTree
-	datTree  types.DataTree
-	rootHash []byte
-}
-
-const (
-	SET    = 1
-	CHANGE = 2
-	INSERT = 3
-	DELETE = 4
-	NOP    = 0
-)
-
-type Entry = types.Entry
-
-func NewSetTask(k, v []byte) types.UpdateTask {
-	return types.UpdateTask{
-		TaskKind: SET,
-		Key:      k,
-		Value:    v,
-	}
-}
-
-func NewDeleteTask(k []byte) types.UpdateTask {
-	return types.UpdateTask{
-		TaskKind: DELETE,
-		Key:      k,
-	}
-}
-
-func (okv *OnvaKV) GetRootHash() []byte {
-	return append([]byte{}, okv.rootHash...)
-}
-
-func (okv *OnvaKV) Get(k []byte) []byte {
-	pos, ok := okv.idxTree.Get(k)
-	if !ok {
-		return nil
-	}
-	return okv.datTree.ReadEntry(pos).Value
-}
-
-func (okv *OnvaKV) getEntry(k []byte) *Entry {
-	pos, ok := okv.idxTree.Get(k)
-	if !ok {
-		return nil
-	}
-	return okv.datTree.ReadEntry(pos)
-}
-
-func (okv *OnvaKV) getPrevEntry(k []byte) *Entry {
-	iter := okv.idxTree.ReverseIterator([]byte{}, k)
-	if !iter.Valid() {
-		panic("The iterator is invalid! Missing a guard node?")
-	}
-	pos := iter.Value()
-	return okv.datTree.ReadEntry(pos)
-}
-
-func (okv *OnvaKV) changeEntry(e *Entry, v []byte) {
-	okv.datTree.DeactiviateEntry(e.SerialNum)
-	e.LastHeight = e.Height
-	e.Height = okv.meta.GetCurrHeight()
-	e.SerialNum = okv.meta.GetMaxSerialNum()
-	okv.meta.IncrMaxSerialNum()
-	pos := okv.datTree.AppendEntry(e)
-	okv.idxTree.Set(e.Key, pos)
-}
-
-func (okv *OnvaKV) insertEntry(prev *Entry, k []byte, v []byte) {
-	curr := &Entry{
-		Key:        k,
-		Value:      v,
-		NextKey:    prev.NextKey,
-		Height:     okv.meta.GetCurrHeight(),
-		LastHeight: -1,
-		SerialNum:  okv.meta.GetMaxSerialNum(),
-	}
-	okv.meta.IncrMaxSerialNum()
-	pos := okv.datTree.AppendEntry(prev)
-	okv.idxTree.Set(curr.Key, pos)
-
-	okv.datTree.DeactiviateEntry(prev.SerialNum)
-	prev.LastHeight = prev.Height
-	prev.Height = okv.meta.GetCurrHeight()
-	prev.SerialNum = okv.meta.GetMaxSerialNum()
-	prev.NextKey = k
-	okv.meta.IncrMaxSerialNum()
-	pos = okv.datTree.AppendEntry(prev)
-	okv.idxTree.Set(prev.Key, pos)
-
-	okv.meta.IncrActiveEntryCount()
-}
-
-func (okv *OnvaKV) deleteEntry(prev *Entry, curr *Entry) {
-	okv.datTree.DeactiviateEntry(curr.SerialNum)
-	okv.datTree.DeactiviateEntry(prev.SerialNum)
-	prev.LastHeight = prev.Height
-	prev.Height = okv.meta.GetCurrHeight()
-	prev.SerialNum = okv.meta.GetMaxSerialNum()
-	prev.NextKey = curr.NextKey
-	okv.meta.IncrMaxSerialNum()
-	pos := okv.datTree.AppendEntry(prev)
-	okv.idxTree.Set(prev.Key, pos)
-
-	okv.meta.DecrActiveEntryCount()
-}
-
-func (okv *OnvaKV) runTask(task types.UpdateTask) {
-	if task.TaskKind == INSERT {
-		okv.insertEntry(task.PrevEntry, task.Key, task.Value)
-	} else if task.TaskKind == CHANGE {
-		okv.changeEntry(task.CurrEntry, task.Value)
-	} else if task.TaskKind == DELETE {
-		okv.deleteEntry(task.PrevEntry, task.CurrEntry)
-	} else {
-		panic("Invalid Task Kind")
-	}
-}
-
-const (
-	MinimumTasksInGoroutine = 10
-	MaximumGoroutines       = 128
-)
-
-func (okv *OnvaKV) prepareTask(task *types.UpdateTask) {
-	if task.TaskKind == SET {
-		task.CurrEntry = okv.getEntry(task.Key)
-		if task.CurrEntry == nil {
-			task.TaskKind = INSERT
-			task.PrevEntry = okv.getPrevEntry(task.Key)
-		} else {
-			task.TaskKind = CHANGE
-		}
-	} else if task.TaskKind == DELETE {
-		task.CurrEntry = okv.getEntry(task.Key)
-		if task.CurrEntry == nil {
-			task.TaskKind = NOP
-		} else {
-			task.PrevEntry = okv.getPrevEntry(task.Key)
-		}
-	} else {
-		panic("Invalid Task Kind")
-	}
-}
-
-func (okv *OnvaKV) prepareTasks(tasks []types.UpdateTask) {
-	stripe := MinimumTasksInGoroutine
-	if stripe*MaximumGoroutines < len(tasks) {
-		stripe = len(tasks) / MaximumGoroutines
-		if len(tasks)%MaximumGoroutines != 0 {
-			stripe++
-		}
-	}
-	var wg sync.WaitGroup
-	for start := 0; start < len(tasks); start += stripe {
-		end := start + stripe
-		if end > len(tasks) {
-			end = len(tasks)
-		}
-		wg.Add(1)
-		go func() {
-			for i := start; i < end; i++ {
-				okv.prepareTask(&tasks[i])
-			}
-			wg.Done()
-		}()
-	}
-	wg.Wait()
-}
-
-func (okv *OnvaKV) numOfKeptEntries() int64 {
-	return okv.meta.GetMaxSerialNum() - okv.meta.GetOldestActiveTwigID()*datatree.LeafCountInTwig
-}
-
-func (okv *OnvaKV) EndBlock(tasks []types.UpdateTask, height int64) {
-	okv.prepareTasks(tasks)
-	okv.idxTree.BeginWrite(height)
-	for _, task := range tasks {
-		okv.runTask(task)
-	}
-	okv.meta.SetCurrHeight(height)
-	for okv.numOfKeptEntries() > okv.meta.GetActiveEntryCount()*ActiveEntriesToKeptEntriesRation &&
-		okv.meta.GetActiveEntryCount() > StartReapThres {
-		twigID := okv.meta.GetOldestActiveTwigID()
-		entries := okv.datTree.GetActiveEntriesInTwig(twigID)
-		for _, e := range entries {
-			okv.datTree.DeactiviateEntry(e.SerialNum)
-			e.SerialNum = okv.meta.GetMaxSerialNum()
-			okv.meta.IncrMaxSerialNum()
-			pos := okv.datTree.AppendEntry(e)
-			okv.idxTree.Set(e.Key, pos)
-		}
-		okv.datTree.DeleteActiveTwig(twigID)
-		okv.meta.IncrOldestActiveTwigID()
-	}
-	okv.idxTree.EndWrite()
-	okv.rootHash = okv.datTree.EndBlock()
-
-	eS, tS := okv.datTree.GetFileSizes()
-	okv.meta.SetEntryFileSize(eS)
-	okv.meta.SetTwigMtFileSize(tS)
+	okv.idxTree.SetPruneHeight(uint64(height))
 }
 
 type OnvaIterator struct {
@@ -256,8 +439,12 @@ func (iter *OnvaIterator) Key() []byte {
 	return iter.iter.Key()
 }
 func (iter *OnvaIterator) Value() []byte {
+	if !iter.Valid() {
+		return nil
+	}
 	pos := iter.iter.Value()
-	return iter.okv.datTree.ReadEntry(pos).Value
+	//fmt.Printf("pos = %d %#v\n", pos, iter.okv.datTree.ReadEntry(int64(pos)))
+	return iter.okv.datTree.ReadEntry(int64(pos)).Value
 }
 func (iter *OnvaIterator) Close() {
 	iter.iter.Close()

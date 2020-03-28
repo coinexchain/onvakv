@@ -373,7 +373,7 @@ func (tree *Tree) reapNodes(startID, endID int64) []byte {
 	return EdgeNodesToBytes(newEdgeNodes)
 }
 
-func (tree *Tree) DeleteActiveTwig(twigID int64) {
+func (tree *Tree) EvictTwig(twigID int64) {
 	tree.twigsToBeDeleted = append(tree.twigsToBeDeleted, twigID)
 }
 

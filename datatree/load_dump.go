@@ -393,3 +393,18 @@ func RecoverTree(blockSize int, dirName string, edgeNodes []*EdgeNode, oldestAct
 	return tree
 }
 
+func CompareTreeNodes(treeA, treeB *Tree) {
+	nodesA := treeA.nodes
+	nodesB := treeB.nodes
+	if len(nodesA) != len(nodesB) {
+		panic("Different nodes count")
+	}
+	for pos := range nodesA {
+		hashA := nodesA[pos]
+		hashB := nodesB[pos]
+		if !bytes.Equal(hashA[:], hashB[:]) {
+			panic("Different Hash")
+		}
+	}
+}
+
