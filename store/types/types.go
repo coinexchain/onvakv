@@ -35,6 +35,7 @@ type KObjStore interface {
 	GetObj(key []byte, ptr *Serializable)
 	GetReadOnlyObj(key []byte, ptr *Serializable)
 	Has(key []byte) bool
+
 	Iterator(start, end []byte) ObjIterator
 	ReverseIterator(start, end []byte) ObjIterator
 
@@ -43,24 +44,3 @@ type KObjStore interface {
 	Delete(key []byte)
 }
 
-type BaseStore interface {
-	Get(key []byte) []byte
-	GetObj(key []byte, ptr *Serializable)
-	GetObjCopy(key []byte, ptr *Serializable)
-	GetReadOnlyObj(key []byte, ptr *Serializable)
-	PrefetchObj(key []byte, ptr *Serializable)
-	Has(key []byte) bool
-	Iterator(start, end []byte) ObjIterator
-	ReverseIterator(start, end []byte) ObjIterator
-
-	SetAsync(key, value []byte)
-	SetObjAsync(key []byte, obj Serializable)
-	DeleteAsync(key []byte)
-	Flush()
-}
-
-type MultiStore interface {
-	BaseStore
-	SubStore(StoreKey) KObjStore
-	Cached() MultiStore
-}

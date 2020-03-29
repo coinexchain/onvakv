@@ -30,7 +30,7 @@ func (cs *CacheStore) ScanAllEntries(fn func(key []byte, obj interface{}, isDele
 	}
 	defer e.Close()
 	key, value, err := e.Next()
-	for err != nil {
+	for err == nil {
 		if value.GetObj() == nil {
 			panic("Dangling Cache Entry")
 		}
@@ -53,35 +53,13 @@ func (cs *CacheStore) Get(key []byte) (res []byte, status types.CacheStatus) {
 		} else {
 			res = obj.(types.Serializable).ToBytes()
 		}
+		status = types.Hit
 	}
 	return
 }
 
-func (cs *CacheStore) GetObjCopy(key []byte, ptr *types.Serializable) (status types.CacheStatus) {
-	cs.bt.Put(key, func(oldV b.Value, exists bool) (newV b.Value, write bool) {
-		if exists {
-			if oldV.IsDeleted() {
-				status = types.JustDeleted
-			} else {
-				bz, isRawBytes := oldV.GetObj().([]byte)
-				if isRawBytes {
-					(*ptr).FromBytes(bz)
-				} else {
-					obj := oldV.GetObj().(types.Serializable)
-					newV = b.NewValue(obj.DeepCopy())
-					reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(obj))
-					write = true
-				}
-				status = types.Hit
-			}
-		} else {
-			status = types.Missed
-		}
-		return
-	})
-	return
-}
-
+// Move the object out from this cache, and left a Nil value in cache
+// This object must be returned to cache using SetObj
 func (cs *CacheStore) GetObj(key []byte, ptr *types.Serializable) (status types.CacheStatus) {
 	cs.bt.Put(key, func(oldV b.Value, exists bool) (newV b.Value, write bool) {
 		if exists {
@@ -106,6 +84,28 @@ func (cs *CacheStore) GetObj(key []byte, ptr *types.Serializable) (status types.
 	return
 }
 
+// Get the object's copy
+func (cs *CacheStore) GetObjCopy(key []byte, ptr *types.Serializable) (status types.CacheStatus) {
+	v, ok := cs.bt.Get(key)
+	if !ok {
+		status = types.Missed
+	} else if v.IsDeleted() {
+		status = types.JustDeleted
+	} else {
+		obj := v.GetObj()
+		bz, isRawBytes := obj.([]byte)
+		if isRawBytes {
+			(*ptr).FromBytes([]byte(bz))
+		} else {
+			sobj := obj.(types.Serializable)
+			reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(sobj.DeepCopy()))
+		}
+		status = types.Hit
+	}
+	return
+}
+
+// Get the object and this object is still contained in cache, so the client must use the object as readonly
 func (cs *CacheStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) (status types.CacheStatus) {
 	v, ok := cs.bt.Get(key)
 	if !ok {
@@ -167,16 +167,22 @@ func (iter *ForwardIter) Valid() bool {
 	return iter.err == nil && !iter.value.IsDeleted()
 }
 func (iter *ForwardIter) Next() {
-	iter.key, iter.value, iter.err = iter.enumerator.Next()
-	if bytes.Compare(iter.key, iter.end) >= 0 {
-		iter.err = io.EOF
+	for {
+		iter.key, iter.value, iter.err = iter.enumerator.Next()
+		if bytes.Compare(iter.key, iter.end) >= 0 {
+			iter.err = io.EOF
+			break
+		}
+		if !iter.value.IsDeleted() {
+			break
+		}
 	}
 }
 func (iter *ForwardIter) Key() []byte {
 	return iter.key
 }
 func (iter *ForwardIter) Value() []byte {
-	if iter.value.IsDeleted() {
+	if !iter.Valid() {
 		return nil
 	}
 	obj := iter.value.GetObj()
@@ -188,8 +194,9 @@ func (iter *ForwardIter) Value() []byte {
 	}
 }
 func (iter *ForwardIter) ObjValue(ptr *types.Serializable) {
-	if iter.value.IsDeleted() {
+	if !iter.Valid() {
 		*ptr = nil
+		return
 	}
 	obj := iter.value.GetObj()
 	bz, isRawBytes := obj.([]byte)
@@ -200,7 +207,9 @@ func (iter *ForwardIter) ObjValue(ptr *types.Serializable) {
 	}
 }
 func (iter *ForwardIter) Close() {
-	iter.enumerator.Close()
+	if iter.enumerator != nil {
+		iter.enumerator.Close()
+	}
 }
 
 func (iter *BackwardIter) Domain() ([]byte, []byte) {
@@ -210,16 +219,22 @@ func (iter *BackwardIter) Valid() bool {
 	return iter.err == nil && !iter.value.IsDeleted()
 }
 func (iter *BackwardIter) Next() {
-	iter.key, iter.value, iter.err = iter.enumerator.Prev()
-	if bytes.Compare(iter.key, iter.start) < 0 {
-		iter.err = io.EOF
+	for {
+		iter.key, iter.value, iter.err = iter.enumerator.Prev()
+		if bytes.Compare(iter.key, iter.start) < 0 {
+			iter.err = io.EOF
+			break
+		}
+		if !iter.value.IsDeleted() {
+			break
+		}
 	}
 }
 func (iter *BackwardIter) Key() []byte {
 	return iter.key
 }
 func (iter *BackwardIter) Value() []byte {
-	if iter.value.IsDeleted() {
+	if !iter.Valid() {
 		return nil
 	}
 	obj := iter.value.GetObj()
@@ -231,8 +246,9 @@ func (iter *BackwardIter) Value() []byte {
 	}
 }
 func (iter *BackwardIter) ObjValue(ptr *types.Serializable) {
-	if iter.value.IsDeleted() {
+	if !iter.Valid() {
 		*ptr = nil
+		return
 	}
 	obj := iter.value.GetObj()
 	bz, isRawBytes := obj.([]byte)
@@ -243,7 +259,9 @@ func (iter *BackwardIter) ObjValue(ptr *types.Serializable) {
 	}
 }
 func (iter *BackwardIter) Close() {
-	iter.enumerator.Close()
+	if iter.enumerator != nil {
+		iter.enumerator.Close()
+	}
 }
 
 func (cs *CacheStore) Iterator(start, end []byte) types.ObjIterator {
@@ -263,6 +281,7 @@ func (cs *CacheStore) ReverseIterator(start, end []byte) types.ObjIterator {
 		iter.err = io.EOF
 		return iter
 	}
+	var ok bool
 	iter.enumerator, ok = cs.bt.Seek(end)
 	if ok { // [start, end) end is exclusive
 		iter.enumerator.Prev()

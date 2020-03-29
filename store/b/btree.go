@@ -10,7 +10,7 @@ import (
 	"sync"
 )
 
-var deletedMarker = de{}
+var deletedMarker int64
 
 type Value struct {
 	obj interface{}

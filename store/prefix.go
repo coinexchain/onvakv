@@ -7,13 +7,13 @@ import (
 )
 
 type PrefixedStore struct {
-	parent types.BaseStore
+	parent *MultiStore
 	prefix []byte
 }
 
 var _ types.KObjStore = PrefixedStore{}
 
-func NewPrefixedStore(parent types.BaseStore, prefix []byte) PrefixedStore {
+func NewPrefixedStore(parent *MultiStore, prefix []byte) PrefixedStore {
 	return PrefixedStore{
 		parent: parent,
 		prefix: prefix,
@@ -61,7 +61,7 @@ func (s PrefixedStore) Set(key, value []byte) {
 	if value == nil {
 		panic("value can not be nil")
 	}
-	s.parent.SetAsync(s.key(key), value)
+	s.parent.Set(s.key(key), value)
 }
 
 // Implements KObjStore
@@ -69,12 +69,12 @@ func (s PrefixedStore) SetObj(key []byte, obj types.Serializable) {
 	if obj == nil {
 		panic("value can not be nil")
 	}
-	s.parent.SetObjAsync(s.key(key), obj)
+	s.parent.SetObj(s.key(key), obj)
 }
 
 // Implements KObjStore
 func (s PrefixedStore) Delete(key []byte) {
-	s.parent.DeleteAsync(s.key(key))
+	s.parent.Delete(s.key(key))
 }
 
 // Implements KObjStore

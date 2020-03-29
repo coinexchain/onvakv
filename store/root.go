@@ -7,35 +7,43 @@ import (
 
 	"github.com/coinexchain/onvakv"
 	"github.com/coinexchain/onvakv/store/types"
-	onvatypes "github.com/coinexchain/onvakv/types"
 )
-
-// TODO: add guard kv pairs
 
 const CacheSizeLimit = 1024 * 1024
 
-type OnvaRootStore struct {
+type RootStore struct {
 	cache       map[string]types.Serializable
 	cacheableFn func(k []byte) bool
 	okv         *onvakv.OnvaKV
-	tasks       []onvatypes.UpdateTask
 	height      int64
 	storeKeys   map[types.StoreKey]struct{}
 }
 
-var _ types.BaseStore = (*OnvaRootStore)(nil)
+func NewRootStore(okv *onvakv.OnvaKV, storeKeys map[types.StoreKey]struct{}, cacheableFn func(k []byte) bool) *RootStore {
+	return &RootStore{
+		cache:       make(map[string]types.Serializable),
+		cacheableFn: cacheableFn,
+		okv:         okv,
+		height:      -1,
+		storeKeys:   storeKeys,
+	}
+}
 
-func (root *OnvaRootStore) SetHeight(h int64) {
+func (root *RootStore) SetHeight(h int64) {
 	root.height = h
 }
 
-func (root *OnvaRootStore) Get(key []byte) []byte {
-	return root.okv.Get(key)
+func (root *RootStore) Get(key []byte) []byte {
+	e := root.okv.GetEntry(key)
+	if e == nil {
+		return nil
+	}
+	return e.Value
 }
-func (root *OnvaRootStore) GetObjCopy(key []byte, ptr *types.Serializable) {
+func (root *RootStore) GetObjCopy(key []byte, ptr *types.Serializable) {
 	root.GetObj(key, ptr)
 }
-func (root *OnvaRootStore) GetObj(key []byte, ptr *types.Serializable) {
+func (root *RootStore) GetObj(key []byte, ptr *types.Serializable) {
 	ok := false
 	var obj types.Serializable
 	if root.cacheableFn(key) {
@@ -44,43 +52,60 @@ func (root *OnvaRootStore) GetObj(key []byte, ptr *types.Serializable) {
 	if ok {
 		reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(obj))
 		root.cache[string(key)] = obj.DeepCopy().(types.Serializable)
-	} else if bz := root.okv.Get(key); bz != nil {
+	} else if bz := root.Get(key); bz != nil {
 		(*ptr).FromBytes(bz)
 	} else {
 		*ptr = nil
 	}
 }
-func (root *OnvaRootStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
+func (root *RootStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
 	root.GetObj(key, ptr)
 }
-func (root *OnvaRootStore) PrefetchObj(key []byte, ptr *types.Serializable) {
-	ok := false
-	if root.cacheableFn(key) {
-		_, ok = root.cache[string(key)]
-	}
-	if !ok {
-		if bz := root.okv.Get(key); bz != nil {
-			(*ptr).FromBytes(bz)
-			root.cache[string(key)] = *ptr
-		}
-	}
+
+func (root *RootStore) Has(key []byte) bool {
+	return root.okv.GetEntry(key) != nil
 }
-func (root *OnvaRootStore) Has(key []byte) bool {
-	return root.okv.Get(key) != nil
+
+func (root *RootStore) PrepareForUpdate(key []byte) {
+	root.okv.PrepareForUpdate(key)
 }
-func (root *OnvaRootStore) Iterator(start, end []byte) types.ObjIterator {
+
+func (root *RootStore) PrepareForDeletion(key []byte) {
+	root.okv.PrepareForDeletion(key)
+}
+
+func (root *RootStore) Iterator(start, end []byte) types.ObjIterator {
 	return &RootStoreIterator{root: root, iter: root.okv.Iterator(start, end)}
 }
-func (root *OnvaRootStore) ReverseIterator(start, end []byte) types.ObjIterator {
+func (root *RootStore) ReverseIterator(start, end []byte) types.ObjIterator {
 	return &RootStoreIterator{root: root, iter: root.okv.ReverseIterator(start, end)}
 }
-func (root *OnvaRootStore) SetAsync(key, value []byte) {
-	root.tasks = append(root.tasks, onvakv.NewSetTask(key, value))
+
+func (root *RootStore) BeginWrite() {
+	if root.height < 0 {
+		panic("Height is not initialized")
+	}
+	root.okv.BeginWrite(root.height)
 }
-func (root *OnvaRootStore) SetObjAsync(key []byte, obj types.Serializable) {
-	root.tasks = append(root.tasks, onvakv.NewSetTask(key, obj.ToBytes()))
+
+func (root *RootStore) Set(key, value []byte) {
+	root.okv.Set(key, value)
 }
-func (root *OnvaRootStore) addToCache(key []byte, obj types.Serializable) {
+
+func (root *RootStore) SetObj(key []byte, obj types.Serializable) {
+	root.okv.Set(key, obj.ToBytes())
+	root.addToCache(key, obj)
+}
+
+func (root *RootStore) Delete(key []byte) {
+	root.okv.Delete(key)
+}
+
+func (root *RootStore) EndWrite() {
+	root.okv.EndWrite()
+}
+
+func (root *RootStore) addToCache(key []byte, obj types.Serializable) {
 	if !root.cacheableFn(key) {
 		return
 	}
@@ -92,26 +117,22 @@ func (root *OnvaRootStore) addToCache(key []byte, obj types.Serializable) {
 	}
 	root.cache[string(key)] = obj
 }
-func (root *OnvaRootStore) DeleteAsync(key []byte) {
-	root.tasks = append(root.tasks, onvakv.NewDeleteTask(key))
-}
-func (root *OnvaRootStore) Flush() {
-	root.okv.EndBlock(root.tasks, root.height)
-	root.tasks = root.tasks[:0]
-}
-func (root *OnvaRootStore) Cached() types.MultiStore {
-	return &OverlayedMultiStore{
+
+func (root *RootStore) GetTrunkStore() *TrunkStore {
+	return &TrunkStore{
 		cache:     NewCacheStore(),
-		parent:    root,
+		root:      root,
 		storeKeys: root.storeKeys,
+		isWriting: 0,
 	}
 }
-func (root *OnvaRootStore) GetRootHash() []byte {
+
+func (root *RootStore) GetRootHash() []byte {
 	return root.okv.GetRootHash()
 }
 
 type RootStoreIterator struct {
-	root *OnvaRootStore
+	root *RootStore
 	iter dbm.Iterator
 }
 
@@ -147,10 +168,3 @@ func (iter *RootStoreIterator) Close() {
 	iter.iter.Close()
 }
 
-//SetPruning(PruningOptions)
-// Mount a store of type using the given db.
-// If db == nil, the new store will use the CommitMultiStore db.
-//MountStoreWithDB(key StoreKey, typ StoreType, db dbm.DB)
-// Load the latest persisted version.  Called once after all
-// calls to Mount*Store() are complete.
-//LoadLatestVersion() error

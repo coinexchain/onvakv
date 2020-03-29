@@ -9,6 +9,20 @@ type Entry struct {
 	SerialNum  int64
 }
 
+type OperationOnEntry int32
+
+const (
+	OpNone OperationOnEntry = iota
+	OpDelete
+	OpInsertOrChange
+)
+
+type EntryX struct {
+	EntryPtr   *Entry
+	Operation  OperationOnEntry
+	IsModified bool
+}
+
 type Iterator interface {
 	Domain() (start []byte, end []byte)
 	Valid() bool
@@ -18,13 +32,13 @@ type Iterator interface {
 	Close()
 }
 
-type UpdateTask struct {
-	TaskKind  int
-	PrevEntry *Entry
-	CurrEntry *Entry
-	Key       []byte
-	Value     []byte
-}
+//type UpdateTask struct {
+//	TaskKind  int
+//	PrevEntry *Entry
+//	CurrEntry *Entry
+//	Key       []byte
+//	Value     []byte
+//}
 
 type IndexTree interface {
 	Init(dirname string, repFn func([]byte)) error
@@ -36,19 +50,23 @@ type IndexTree interface {
 	GetAtHeight(k []byte, height uint64) (uint64, bool)
 	Set(k []byte, v uint64)
 	Delete(k []byte)
+	SetPruneHeight(h uint64)
+	Close()
 }
 
 type DataTree interface {
 	DeactiviateEntry(sn int64)
-	AppendEntry(entry *Entry) uint64
-	ReadEntry(pos uint64) *Entry
+	AppendEntry(entry *Entry) int64
+	ReadEntry(pos int64) *Entry
 	GetActiveBit(sn int64) bool
-	DeleteActiveTwig(twigID int64)
+	EvictTwig(twigID int64)
 	GetActiveEntriesInTwig(twigID int64) []*Entry
 	TwigCanBePruned(twigID int64) bool
 	PruneTwigs(startID, endID int64) []byte
 	GetFileSizes() (int64, int64)
 	EndBlock() []byte
+	Sync()
+	Close()
 }
 
 type MetaDB interface {
@@ -83,4 +101,10 @@ type MetaDB interface {
 	// the ID of the oldest active twig, increased by ReapOldestActiveTwig
 	GetOldestActiveTwigID() int64
 	IncrOldestActiveTwigID()
+
+	GetIsRunning() bool
+	SetIsRunning(isRunning bool)
+
+	Init()
+	Close()
 }
