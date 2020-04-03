@@ -63,7 +63,7 @@ func (ts *TrunkStore) GetObjCopy(key []byte, ptr *types.Serializable) {
 	status := ts.cache.GetObjCopy(key, ptr)
 	switch status {
 	case types.JustDeleted:
-		ptr = nil
+		*ptr = nil
 	case types.Missed:
 		ts.root.GetObjCopy(key, ptr)
 	}
@@ -76,9 +76,9 @@ func (ts *TrunkStore) GetObj(key []byte, ptr *types.Serializable) {
 	status := ts.cache.GetObj(key, ptr)
 	switch status {
 	case types.JustDeleted:
-		ptr = nil
+		*ptr = nil
 	case types.Missed:
-		ts.root.GetObjCopy(key, ptr)
+		ts.root.GetObj(key, ptr)
 	}
 }
 
@@ -89,7 +89,7 @@ func (ts *TrunkStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
 	status := ts.cache.GetReadOnlyObj(key, ptr)
 	switch status {
 	case types.JustDeleted:
-		ptr = nil
+		*ptr = nil
 	case types.Missed:
 		ts.root.GetReadOnlyObj(key, ptr)
 	}

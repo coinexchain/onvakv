@@ -30,6 +30,18 @@ type OnvaKV struct {
 	k2eCache *sync.Map
 }
 
+func NewOnvaKV4Mock() *OnvaKV {
+	kvdb := dbm.NewMemDB()
+	okv := &OnvaKV{k2eCache: &sync.Map{}}
+	okv.meta = metadb.NewMetaDB(kvdb)
+	okv.meta.Init()
+
+	okv.datTree = datatree.NewMockDataTree()
+	okv.idxTree = indextree.NewMockIndexTree()
+
+	return okv
+}
+
 func NewOnvaKV(dirName string) (*OnvaKV, error) {
 	_, err := os.Stat(dirName)
 	dirNotExists := os.IsNotExist(err)

@@ -28,6 +28,10 @@ func NewValue(obj interface{}) Value {
 	return Value{obj: obj}
 }
 
+func (v Value) HasNilValue() bool {
+	return v.obj == nil
+}
+
 func (v Value) IsDeleted() bool {
 	return v.obj == &deletedMarker
 }

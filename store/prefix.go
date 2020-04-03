@@ -79,14 +79,13 @@ func (s PrefixedStore) Delete(key []byte) {
 
 // Implements KObjStore
 func (s PrefixedStore) Iterator(start, end []byte) types.ObjIterator {
+	if start == nil || end == nil {
+		panic("OnvaKV does not support nil slices for iterator")
+	}
+
 	newstart := cloneAppend(s.prefix, start)
 
-	var newend []byte
-	if end == nil {
-		newend = PrefixEndBytes(s.prefix)
-	} else {
-		newend = cloneAppend(s.prefix, end)
-	}
+	newend := cloneAppend(s.prefix, end)
 
 	iter := s.parent.Iterator(newstart, newend)
 
@@ -95,14 +94,12 @@ func (s PrefixedStore) Iterator(start, end []byte) types.ObjIterator {
 
 // Implements KObjStore
 func (s PrefixedStore) ReverseIterator(start, end []byte) types.ObjIterator {
+	if start == nil || end == nil {
+		panic("OnvaKV does not support nil slices for iterator")
+	}
 	newstart := cloneAppend(s.prefix, start)
 
-	var newend []byte
-	if end == nil {
-		newend = PrefixEndBytes(s.prefix)
-	} else {
-		newend = cloneAppend(s.prefix, end)
-	}
+	newend := cloneAppend(s.prefix, end)
 
 	iter := s.parent.ReverseIterator(newstart, newend)
 
@@ -188,28 +185,3 @@ func stripPrefix(key []byte, prefix []byte) []byte {
 	return key[len(prefix):]
 }
 
-// PrefixEndBytes returns the []byte that would end a
-// range query for all []byte with a certain prefix
-// Deals with last byte of prefix being FF without overflowing
-func PrefixEndBytes(prefix []byte) []byte {
-	if len(prefix) == 0 {
-		return nil
-	}
-
-	end := make([]byte, len(prefix))
-	copy(end, prefix)
-
-	for {
-		if end[len(end)-1] != byte(255) {
-			end[len(end)-1]++
-			break
-		} else {
-			end = end[:len(end)-1]
-			if len(end) == 0 {
-				end = nil
-				break
-			}
-		}
-	}
-	return end
-}

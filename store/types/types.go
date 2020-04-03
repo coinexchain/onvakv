@@ -5,6 +5,22 @@ type StoreKey interface {
 	Prefix() string
 }
 
+type StrStoreKey struct {
+	name, prefix string
+}
+
+func NewStrStoreKey(name, prefix string) *StrStoreKey {
+	return &StrStoreKey{name, prefix}
+}
+
+func (ssk *StrStoreKey) Name() string {
+	return ssk.name
+}
+
+func (ssk *StrStoreKey) Prefix() string {
+	return ssk.prefix
+}
+
 type Serializable interface {
 	ToBytes() []byte
 	FromBytes([]byte)

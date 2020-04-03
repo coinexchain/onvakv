@@ -99,6 +99,7 @@ func (root *RootStore) SetObj(key []byte, obj types.Serializable) {
 
 func (root *RootStore) Delete(key []byte) {
 	root.okv.Delete(key)
+	delete(root.cache, string(key))
 }
 
 func (root *RootStore) EndWrite() {
@@ -115,7 +116,7 @@ func (root *RootStore) addToCache(key []byte, obj types.Serializable) {
 			break
 		}
 	}
-	root.cache[string(key)] = obj
+	root.cache[string(key)] = obj //.DeepCopy().(types.Serializable) // maybe we do not need deepcopy
 }
 
 func (root *RootStore) GetTrunkStore() *TrunkStore {
@@ -159,7 +160,7 @@ func (iter *RootStoreIterator) ObjValue(ptr *types.Serializable) {
 		obj, ok = iter.root.cache[string(key)]
 	}
 	if ok {
-		reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(obj))
+		reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(obj)) // Client must use this obj as readonly
 	} else {
 		(*ptr).FromBytes(iter.iter.Value())
 	}

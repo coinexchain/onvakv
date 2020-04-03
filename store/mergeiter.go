@@ -151,11 +151,13 @@ func (iter *cacheMergeIterator) ObjValue(ptr *types.Serializable) {
 	// If parent is invalid, get the cache value.
 	if !iter.parent.Valid() {
 		iter.cache.ObjValue(ptr)
+		return
 	}
 
 	// If cache is invalid, get the parent value.
 	if !iter.cache.Valid() {
 		iter.parent.ObjValue(ptr)
+		return
 	}
 
 	// Both are valid.  Compare keys.

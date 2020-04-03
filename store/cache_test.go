@@ -218,17 +218,33 @@ func TestCacheIter(t *testing.T) {
 	assert.Equal(t, "1105", string(iter.Key()))
 	iter.Close()
 
+	//cs.Set([]byte("1101"), coord1.ToBytes())
+	//cs.Set([]byte("1102"), coord2.ToBytes())
+	//cs.SetObj([]byte("1103"), coord3)
+	//cs.SetObj([]byte("1104"), coord4)
+	//cs.SetObj([]byte("1105"), coord5)
+	//cs.SetObj([]byte("1106"), coord6)
 	cs.Delete([]byte("1105"))
 	cs.Delete([]byte("1104"))
 	cs.Delete([]byte("1102"))
+	fmt.Printf("---------- []byte(11033), []byte(11066))\n")
 	iter = cs.ReverseIterator([]byte("11033"), []byte("11066"))
 	assert.Equal(t, "1106", string(iter.Key()))
 	assert.Equal(t, []byte{6, 0, 0, 0, 6, 0, 0, 0}, iter.Value())
+	iter.Next()
+	assert.Equal(t, "1105", string(iter.Key()))
+	assert.Nil(t, iter.Value())
+	iter.Next()
+	assert.Equal(t, "1104", string(iter.Key()))
+	assert.Nil(t, iter.Value())
 	iter.Next()
 	assert.Equal(t, false, iter.Valid())
 	iter.Close()
 	iter = cs.Iterator([]byte("1101"), []byte("11033"))
 	assert.Equal(t, "1101", string(iter.Key()))
+	iter.Next()
+	assert.Equal(t, "1102", string(iter.Key()))
+	assert.Nil(t, iter.Value())
 	iter.Next()
 	assert.Equal(t, "1103", string(iter.Key()))
 	assert.Equal(t, true, iter.Valid())
@@ -236,14 +252,4 @@ func TestCacheIter(t *testing.T) {
 	assert.Equal(t, false, iter.Valid())
 	iter.Close()
 }
-
-//func (iter *BackwardIter) Domain() ([]byte, []byte) {
-//func (iter *BackwardIter) Valid() bool {
-//func (iter *BackwardIter) Next() {
-//func (iter *BackwardIter) Key() []byte {
-//func (iter *BackwardIter) Value() []byte {
-//func (iter *BackwardIter) ObjValue(ptr *types.Serializable) {
-//func (iter *BackwardIter) Close() {
-//func (cs *CacheStore) Iterator(start, end []byte) types.ObjIterator {
-//func (cs *CacheStore) ReverseIterator(start, end []byte) types.ObjIterator {
 

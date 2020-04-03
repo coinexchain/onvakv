@@ -50,21 +50,11 @@ func (ms *MultiStore) Get(key []byte) []byte {
 	}
 }
 
-func (ms *MultiStore) GetObjCopy(key []byte, ptr *types.Serializable) {
-	status := ms.cache.GetObjCopy(key, ptr)
-	switch status {
-	case types.JustDeleted:
-		ptr = nil
-	case types.Missed:
-		ms.parent.GetObjCopy(key, ptr)
-	}
-}
-
 func (ms *MultiStore) GetObj(key []byte, ptr *types.Serializable) {
 	status := ms.cache.GetObj(key, ptr)
 	switch status {
 	case types.JustDeleted:
-		ptr = nil
+		*ptr = nil
 	case types.Missed:
 		ms.parent.GetObjCopy(key, ptr)
 	}
@@ -74,7 +64,7 @@ func (ms *MultiStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
 	status := ms.cache.GetReadOnlyObj(key, ptr)
 	switch status {
 	case types.JustDeleted:
-		ptr = nil
+		*ptr = nil
 	case types.Missed:
 		ms.parent.GetReadOnlyObj(key, ptr)
 	}

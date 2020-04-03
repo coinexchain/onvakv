@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"bytes"
 	"io"
 	"reflect"
@@ -31,8 +32,8 @@ func (cs *CacheStore) ScanAllEntries(fn func(key []byte, obj interface{}, isDele
 	defer e.Close()
 	key, value, err := e.Next()
 	for err == nil {
-		if value.GetObj() == nil {
-			panic("Dangling Cache Entry")
+		if value.HasNilValue() {
+			panic(fmt.Sprintf("Dangling Cache Entry for %s(%v) %#v", string(key), key, value))
 		}
 		fn(key, value.GetObj(), value.IsDeleted())
 		key, value, err = e.Next()
@@ -164,18 +165,12 @@ func (iter *ForwardIter) Domain() ([]byte, []byte) {
 	return iter.start, iter.end
 }
 func (iter *ForwardIter) Valid() bool {
-	return iter.err == nil && !iter.value.IsDeleted()
+	return iter.err == nil
 }
 func (iter *ForwardIter) Next() {
-	for {
-		iter.key, iter.value, iter.err = iter.enumerator.Next()
-		if bytes.Compare(iter.key, iter.end) >= 0 {
-			iter.err = io.EOF
-			break
-		}
-		if !iter.value.IsDeleted() {
-			break
-		}
+	iter.key, iter.value, iter.err = iter.enumerator.Next()
+	if bytes.Compare(iter.key, iter.end) >= 0 {
+		iter.err = io.EOF
 	}
 }
 func (iter *ForwardIter) Key() []byte {
@@ -183,6 +178,9 @@ func (iter *ForwardIter) Key() []byte {
 }
 func (iter *ForwardIter) Value() []byte {
 	if !iter.Valid() {
+		return nil
+	}
+	if iter.value.IsDeleted() {
 		return nil
 	}
 	obj := iter.value.GetObj()
@@ -195,6 +193,10 @@ func (iter *ForwardIter) Value() []byte {
 }
 func (iter *ForwardIter) ObjValue(ptr *types.Serializable) {
 	if !iter.Valid() {
+		*ptr = nil
+		return
+	}
+	if iter.value.IsDeleted() {
 		*ptr = nil
 		return
 	}
@@ -216,18 +218,12 @@ func (iter *BackwardIter) Domain() ([]byte, []byte) {
 	return iter.start, iter.end
 }
 func (iter *BackwardIter) Valid() bool {
-	return iter.err == nil && !iter.value.IsDeleted()
+	return iter.err == nil
 }
 func (iter *BackwardIter) Next() {
-	for {
-		iter.key, iter.value, iter.err = iter.enumerator.Prev()
-		if bytes.Compare(iter.key, iter.start) < 0 {
-			iter.err = io.EOF
-			break
-		}
-		if !iter.value.IsDeleted() {
-			break
-		}
+	iter.key, iter.value, iter.err = iter.enumerator.Prev()
+	if bytes.Compare(iter.key, iter.start) < 0 {
+		iter.err = io.EOF
 	}
 }
 func (iter *BackwardIter) Key() []byte {
@@ -235,6 +231,9 @@ func (iter *BackwardIter) Key() []byte {
 }
 func (iter *BackwardIter) Value() []byte {
 	if !iter.Valid() {
+		return nil
+	}
+	if iter.value.IsDeleted() {
 		return nil
 	}
 	obj := iter.value.GetObj()
@@ -247,6 +246,10 @@ func (iter *BackwardIter) Value() []byte {
 }
 func (iter *BackwardIter) ObjValue(ptr *types.Serializable) {
 	if !iter.Valid() {
+		*ptr = nil
+		return
+	}
+	if iter.value.IsDeleted() {
 		*ptr = nil
 		return
 	}
