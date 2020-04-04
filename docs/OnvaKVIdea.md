@@ -1,4 +1,4 @@
-1) In the whole history of a blockchain, how can we prove which KV pairs were created/updated at which blocks?
+### 1.0 In the whole history of a blockchain, how can we prove which KV pairs were created/updated at which blocks?
 
 When a Key-Value pair is created/updated at a block of Height, we create such an Entry:
 
@@ -20,7 +20,7 @@ Of cause, in the implementation, we do not really add null entries for padding. 
 
 
 
-2) How to store such a Merkle tree
+### 2.0 How to store such a Merkle tree
 
 If we keep the whole Merkle tree in DRAM, then we can provide the proofs very fast. But unfortunately, it will cost a huge amount of DRAM so it is not feasible. A reasonable trade-off is: since the upper levels is more likely to get accessed than the lower levels, we can keep the upper levels in DRAM and the lower levels on hard disk.
 
@@ -28,7 +28,7 @@ In the current golang implementation of OnvaKV, we store the lowest 11 levels of
 
 ![OnvaKV_3](./images/OnvaKV_3.png)
 
-3) How to prove a KV-pair is up-to-date? In other words, since some height H, an KV-pair is left untouched (not changed or deleted).
+### 3.0 How to prove a KV-pair is up-to-date? In other words, since some height H, an KV-pair is left untouched (not changed or deleted).
 
 An ActiveBit is attached to each entry. If ActiveBit==1, then this KV-pair is up-to-date; if ActiveBit==0, then this KV-pair has been changed or deleted after the height recorded in the entry.
 
@@ -36,7 +36,7 @@ These ActiveBits need to be random-accessed, because an ActiveBits can be cleare
 
 
 
-4) Should we build a dedicated Merkle tree for these ActiveBits?
+### 4.0 Should we build a dedicated Merkle tree for these ActiveBits?
 
 Although we do want to provide Merkle proofs for some individual ActiveBit, a dedicated Merkle tree is not necessary. A more memory-efficient implementation is to integrate the ActiveBits into a twig. That is, a twig contains 2048 entries and the corresponded 2048 ActiveBits.
 
@@ -46,7 +46,7 @@ The small Merkle tree inside a twig now is made of two parts, as is shown below.
 
 
 
-5) How to prune the ActiveBits and entries? 
+### 5.0 How to prune the ActiveBits and entries? 
 
 We want to keep only the recent entries whose ActiveBits equal 1, and prune the old ones to save memory. But now we can not make sure that the old enough entries are inactive (i.e. having their ActiveBits==0). Actually, even the oldest entries may be still active. 
 
@@ -58,7 +58,7 @@ Using this method, we can ensure the old enough entries are deactived if their S
 
 ![OnvaKV_5](./images/OnvaKV_5.png)
 
-6) How to provide non-existence proof? That is, we want to prove there are no other key(s) between key A and key B.
+### 6.0 How to provide non-existence proof? That is, we want to prove there are no other key(s) between key A and key B.
 
 A NextKey field must be added to the entry:
 
@@ -70,7 +70,7 @@ After Height, if some events happened between Key and NextKey (deletion, overwri
 
 
 
-7) How to proof a KV pair at any height? Even if at this height nothing happens on this KV pair.
+### 7.0 How to proof a KV pair at any height? Even if at this height nothing happens on this KV pair.
 
 Now, using the information in entries, we can prove at some height H0 and H, a KV-pair was created or updated. But we can not prove that nothing happened between H0 and H.
 
@@ -88,7 +88,7 @@ The information in an entry show:
 
 
 
-8) What are the possible status for twigs.
+### 8.0 What are the possible status for twigs.
 
 We can describe a twig's status using several terms. 
 
@@ -109,7 +109,7 @@ A twig can be in one of four possible states:
 
 
 
-9) How to query a KV pair fast?
+### 9.0  How to query a KV pair fast?
 
 We can build an index, which maps a (key, height) tuple to a 64-bit integer, which is the offset of the entry in file. If you want to know the latest value of the key, just set height to -1.
 
@@ -117,7 +117,7 @@ This index must support iterator, so hash tables do not work. We must use some t
 
 
 
-10) How to prune the inactive twigs?
+### 10.0 How to prune the inactive twigs?
 
 A block at height H can create one or more entries. The SerialNum of the first entry created by it is denoted as SerialNum(H). When we do not need the information about the blocks older than H, we can prune the twigs whose entries' SerialNum are smaller than SerialNum(H).
 
@@ -129,7 +129,7 @@ The left eleven-level Merkle trees occupies constant bytes on disk. So it is eas
 
 
 
-11) How can a new node catch up the latest state?
+### 11.0 How can a new node catch up the latest state?
 
 When a new node joins the P2P network of the blockchain, we hope it can build the latest state from the active twigs fetched from other nodes, because executing all the blocks from genesis is too time-consuming.
 
@@ -145,7 +145,7 @@ DeactivedSNLists are save to hard disks together with the other information in e
 
 
 
-12) What is a readonly node?
+### 12.0 What is a readonly node?
 
 A readonly node does not execute new blocks or forward pending transactions as normal full node. But it contains the full state, which is different from a light node. A readonly node acts as a database, from which you can query the blockchain's state, latest or historical.
 
