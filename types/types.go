@@ -53,6 +53,8 @@ type IndexTree interface {
 	Close()
 }
 
+type EntryHandler func(pos int64, entry *Entry, deactivedSNList []int64)
+
 type DataTree interface {
 	DeactiviateEntry(sn int64)
 	AppendEntry(entry *Entry) int64
@@ -60,6 +62,7 @@ type DataTree interface {
 	GetActiveBit(sn int64) bool
 	EvictTwig(twigID int64)
 	GetActiveEntriesInTwig(twigID int64) []*Entry
+	ScanEntries(oldestActiveTwigID int64, handler EntryHandler)
 	TwigCanBePruned(twigID int64) bool
 	PruneTwigs(startID, endID int64) []byte
 	GetFileSizes() (int64, int64)

@@ -49,7 +49,7 @@ func NewOnvaKV4Mock() *OnvaKV {
 	return okv
 }
 
-func NewOnvaKV(dirName string) (*OnvaKV, error) {
+func NewOnvaKV(dirName string, queryHistory bool) (*OnvaKV, error) {
 	_, err := os.Stat(dirName)
 	dirNotExists := os.IsNotExist(err)
 	okv := &OnvaKV{k2eCache: &sync.Map{}}
@@ -77,11 +77,18 @@ func NewOnvaKV(dirName string) (*OnvaKV, error) {
 		okv.datTree = datatree.LoadTree(defaultFileSize, dirName)
 	}
 
-	// TODO: add an option to avoid writing historical index to rocksdb
-	okv.idxTree = indextree.NewNVTreeMem(okv.rocksdb)
-	err = okv.idxTree.Init(nil)
-	if err != nil {
-		return nil, err
+	if queryHistory {
+		okv.idxTree = indextree.NewNVTreeMem(okv.rocksdb)
+		err = okv.idxTree.Init(nil)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		okv.idxTree = indextree.NewNVTreeMem(nil)
+		oldestActiveTwigID := okv.meta.GetOldestActiveTwigID()
+		okv.datTree.ScanEntries(oldestActiveTwigID, func(pos int64, entry *Entry, _ []int64) {
+			okv.idxTree.Set(entry.Key, uint64(pos))
+		})
 	}
 
 	okv.meta.SetIsRunning(true)

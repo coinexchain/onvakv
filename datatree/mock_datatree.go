@@ -1,6 +1,7 @@
 package datatree
 
 import (
+	"github.com/coinexchain/onvakv/types"
 )
 
 type MockTwig struct {
@@ -65,6 +66,10 @@ func (dt *MockDataTree) GetActiveEntriesInTwig(twigID int64) []*Entry {
 		}
 	}
 	return res
+}
+
+func (dt *MockDataTree) ScanEntries(oldestActiveTwigID int64, handler types.EntryHandler) {
+	panic("not implemented")
 }
 
 func (dt *MockDataTree) TwigCanBePruned(twigID int64) bool {

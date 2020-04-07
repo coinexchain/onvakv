@@ -11,6 +11,8 @@ import (
 	"sort"
 
 	"github.com/mmcloughlin/meow"
+
+	"github.com/coinexchain/onvakv/types"
 )
 
 func LoadTwigFromFile(infile io.Reader) (twigID int64, twig Twig, err error) {
@@ -332,14 +334,20 @@ func (tree *Tree) RecoverEntry(pos int64, entry *Entry, deactivedSNList []int64,
 	}
 }
 
-func (tree *Tree) RecoverTwigs(oldestActiveTwigID int64) {
+func (tree *Tree) ScanEntries(oldestActiveTwigID int64, handler types.EntryHandler) {
 	pos := tree.twigMtFile.GetFirstEntryPos(oldestActiveTwigID)
 	size := tree.entryFile.Size()
 	for pos < size {
 		entry, deactivedSNList, nextPos := tree.entryFile.ReadEntry(pos)
-		tree.RecoverEntry(pos, entry, deactivedSNList, oldestActiveTwigID)
+		handler(pos, entry, deactivedSNList)
 		pos = nextPos
 	}
+}
+
+func (tree *Tree) RecoverTwigs(oldestActiveTwigID int64) {
+	tree.ScanEntries(oldestActiveTwigID, func(pos int64, entry *Entry, deactivedSNList []int64) {
+		tree.RecoverEntry(pos, entry, deactivedSNList, oldestActiveTwigID)
+	})
 	tree.syncMT4YoungestTwig()
 	tree.syncMT4ActiveBits()
 	tree.touchedPosOf512b = make(map[int64]struct{}) // clear the list
