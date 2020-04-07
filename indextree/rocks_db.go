@@ -26,6 +26,9 @@ func (f *HeightCompactionFilter) Filter(level int, key, val []byte) (remove bool
 	if len(key) < 8 {
 		return false, val
 	}
+	if len(key) >= 1 && key[0] !=0 {
+		return false, val // not starting with zero
+	}
 	start := len(key) - 8
 	h := binary.BigEndian.Uint64(key[start:])
 	if f.pruneEnable && f.pruneHeight > h {
@@ -41,6 +44,24 @@ type RocksDB struct {
 	wo     *gorocksdb.WriteOptions
 	woSync *gorocksdb.WriteOptions
 	filter *HeightCompactionFilter
+	batch  *rocksDBBatch
+}
+
+func (db *RocksDB) CurrBatch() dbm.Batch {
+	return db.batch
+}
+
+func (db *RocksDB) CloseOldBatch() {
+	if db.batch != nil {
+		db.batch.WriteSync()
+		db.batch.Close()
+		db.batch = nil
+	}
+}
+
+func (db *RocksDB) OpenNewBatch() {
+	batch := gorocksdb.NewWriteBatch()
+	db.batch = &rocksDBBatch{db, batch}
 }
 
 func NewRocksDB(name string, dir string) (*RocksDB, error) {

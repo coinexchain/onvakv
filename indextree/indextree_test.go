@@ -23,11 +23,20 @@ func mustGetH(tree *NVTreeMem, key []byte, height uint64) uint64 {
 	return res
 }
 
+func createNVTreeMem(dirname string) (*RocksDB, *NVTreeMem) {
+	rocksdb, err := NewRocksDB("idxtree", dirname)
+	if err != nil {
+		panic(err)
+	}
+	return rocksdb, NewNVTreeMem(rocksdb)
+}
+
 func Test1(t *testing.T) {
-	tree := NewNVTreeMem()
-	err := tree.Init("./", func([]byte) {})
+	rocksdb, tree := createNVTreeMem("./")
+	err := tree.Init(func([]byte) {})
 	assert.Equal(t, nil, err)
 	tree.BeginWrite(0)
+	rocksdb.OpenNewBatch()
 	tree.Set([]byte("ABcd1234"), 1)
 	tree.Set([]byte("ABcd1235"), 2)
 	tree.Set([]byte("0bcd1234"), 0)
@@ -35,11 +44,13 @@ func Test1(t *testing.T) {
 	tree.Set([]byte("BBxd1234"), 3)
 	tree.Set([]byte("ZBxd1234"), 4)
 	tree.Delete([]byte("BBxd1234"))
+	rocksdb.CloseOldBatch()
 	tree.EndWrite()
 	tree.Close()
+	rocksdb.Close()
 
-	tree = NewNVTreeMem()
-	err = tree.Init("./", func(k []byte) {})
+	rocksdb, tree = createNVTreeMem("./")
+	err = tree.Init(func(k []byte) {})
 	assert.Equal(t, nil, err)
 
 
@@ -55,9 +66,11 @@ func Test1(t *testing.T) {
 	assert.Equal(t, uint64(3), mustGetH(tree, []byte("ABxd1234"), 9))
 	assert.Equal(t, uint64(4), mustGetH(tree, []byte("ZBxd1234"), 10))
 
+	rocksdb.OpenNewBatch()
 	tree.BeginWrite(10)
 	tree.Set([]byte("ABcd1234"), 111)
 	tree.Set([]byte("1bcd1234"), 100)
+	rocksdb.CloseOldBatch()
 	tree.EndWrite()
 
 	assert.Equal(t, uint64(1), mustGetH(tree, []byte("ABcd1234"), 0))
@@ -128,6 +141,7 @@ func Test1(t *testing.T) {
 	reviter.Close()
 
 	tree.Close()
+	rocksdb.Close()
 
 	os.RemoveAll("./idxtree.db")
 }

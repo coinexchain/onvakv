@@ -41,7 +41,7 @@ type Iterator interface {
 //}
 
 type IndexTree interface {
-	Init(dirname string, repFn func([]byte)) error
+	Init(repFn func([]byte)) error
 	BeginWrite(height int64)
 	EndWrite()
 	Iterator(start, end []byte) Iterator
@@ -50,7 +50,6 @@ type IndexTree interface {
 	GetAtHeight(k []byte, height uint64) (uint64, bool)
 	Set(k []byte, v uint64)
 	Delete(k []byte)
-	SetPruneHeight(h uint64)
 	Close()
 }
 

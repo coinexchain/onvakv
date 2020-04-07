@@ -3,14 +3,9 @@ package onvakv
 import (
 	"fmt"
 	"testing"
-	"sync"
+	"os"
 
-	dbm "github.com/tendermint/tm-db"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/coinexchain/onvakv/datatree"
-	"github.com/coinexchain/onvakv/indextree"
-	"github.com/coinexchain/onvakv/metadb"
 
 )
 
@@ -217,5 +212,6 @@ func Test1(t *testing.T) {
 	iter.Next()
 
 	okv.Close()
+	os.RemoveAll("./rocksdb.db")
 }
 

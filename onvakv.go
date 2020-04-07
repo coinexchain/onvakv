@@ -26,6 +26,7 @@ type OnvaKV struct {
 	meta     types.MetaDB
 	idxTree  types.IndexTree
 	datTree  types.DataTree
+	rocksdb  *indextree.RocksDB
 	rootHash []byte
 	k2eCache *sync.Map
 }
@@ -39,6 +40,12 @@ func NewOnvaKV4Mock() *OnvaKV {
 	okv.datTree = datatree.NewMockDataTree()
 	okv.idxTree = indextree.NewMockIndexTree()
 
+	var err error
+	okv.rocksdb, err = indextree.NewRocksDB("rocksdb", "./")
+	if err != nil {
+		panic(err)
+	}
+
 	return okv
 }
 
@@ -50,11 +57,11 @@ func NewOnvaKV(dirName string) (*OnvaKV, error) {
 		os.Mkdir(dirName, 0700)
 	}
 
-	kvdb, err := dbm.NewGoLevelDB("meta", dirName)
+	okv.rocksdb, err = indextree.NewRocksDB("rocksdb", dirName)
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-	okv.meta = metadb.NewMetaDB(kvdb)
+	okv.meta = metadb.NewMetaDB(okv.rocksdb)
 
 	if dirNotExists { // Create a new database in this dir
 		okv.datTree = datatree.NewEmptyTree(defaultFileSize, dirName)
@@ -70,8 +77,9 @@ func NewOnvaKV(dirName string) (*OnvaKV, error) {
 		okv.datTree = datatree.LoadTree(defaultFileSize, dirName)
 	}
 
-	okv.idxTree = indextree.NewNVTreeMem()
-	err = okv.idxTree.Init(dirName, nil)
+	// TODO: add an option to avoid writing historical index to rocksdb
+	okv.idxTree = indextree.NewNVTreeMem(okv.rocksdb)
+	err = okv.idxTree.Init(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -83,10 +91,12 @@ func NewOnvaKV(dirName string) (*OnvaKV, error) {
 func (okv *OnvaKV) Close() {
 	okv.meta.SetIsRunning(false)
 	okv.idxTree.Close()
+	okv.rocksdb.Close()
 	okv.datTree.Sync()
 	okv.datTree.Close()
 	okv.meta.Close()
 	okv.idxTree = nil
+	okv.rocksdb = nil
 	okv.datTree = nil
 	okv.meta = nil
 	okv.k2eCache = nil
@@ -232,6 +242,7 @@ func (okv *OnvaKV) numOfKeptEntries() int64 {
 
 func (okv *OnvaKV) BeginWrite(height int64) {
 	okv.idxTree.BeginWrite(height)
+	okv.rocksdb.OpenNewBatch()
 	okv.meta.SetCurrHeight(height)
 }
 
@@ -368,6 +379,7 @@ func (okv *OnvaKV) EndWrite() {
 		okv.datTree.EvictTwig(twigID)
 		okv.meta.IncrOldestActiveTwigID()
 	}
+	okv.rocksdb.CloseOldBatch()
 	okv.idxTree.EndWrite()
 	okv.rootHash = okv.datTree.EndBlock()
 	okv.k2eCache = &sync.Map{}
@@ -428,7 +440,7 @@ func (okv *OnvaKV) PruneBeforeHeight(height int64) {
 		}
 		okv.meta.SetLastPrunedTwig(end)
 	}
-	okv.idxTree.SetPruneHeight(uint64(height))
+	okv.rocksdb.SetPruneHeight(uint64(height))
 }
 
 type OnvaIterator struct {

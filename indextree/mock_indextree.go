@@ -30,7 +30,7 @@ func NewMockIndexTree() *MockIndexTree {
 	}
 }
 
-func (it *MockIndexTree) Init(dirname string, repFn func([]byte)) error {
+func (it *MockIndexTree) Init(repFn func([]byte)) error {
 	return nil
 }
 

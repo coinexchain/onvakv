@@ -121,35 +121,30 @@ type NVTreeMem struct {
 
 var _ types.IndexTree = (*NVTreeMem)(nil)
 
-func NewNVTreeMem() *NVTreeMem {
+func NewNVTreeMem(rocksdb *RocksDB) *NVTreeMem {
 	btree := b.TreeNew(bytes.Compare)
 	return &NVTreeMem{
-		bt: btree,
+		bt:      btree,
+		rocksdb: rocksdb,
 	}
 }
 
 func (tree *NVTreeMem) Close() {
-	if tree.batch != nil {
-		tree.batch.Close()
-	}
-	if tree.rocksdb != nil {
-		tree.rocksdb.Close()
-	}
 	tree.bt.Close()
 }
 
 // Load the RocksDB and use its up-to-date records to initialize the in-memory B-Tree.
 // RocksDB's historical records are ignored.
-func (tree *NVTreeMem) Init(dirname string, repFn func([]byte)) (err error) {
-	tree.rocksdb, err = NewRocksDB("idxtree", dirname)
-	if err != nil {
-		return err
-	}
+func (tree *NVTreeMem) Init(repFn func([]byte)) (err error) {
 	iter := tree.rocksdb.Iterator([]byte{}, []byte(nil))
 	defer iter.Close()
 	for iter.Valid() {
 		k := iter.Key()
 		v := iter.Value()
+		if k[0] != 0 {
+			continue // the first byte must be zero
+		}
+		k = k[1:]
 		repFn(k) // to report the progress
 		if len(k) < 8 {
 			panic("key length is too short")
@@ -173,7 +168,6 @@ func (tree *NVTreeMem) BeginWrite(currHeight int64) {
 		panic("tree.isWriting cannot be true! bug here...")
 	}
 	tree.isWriting = true
-	tree.batch = tree.rocksdb.NewBatch()
 	binary.BigEndian.PutUint64(tree.currHeight[:], uint64(currHeight))
 }
 
@@ -183,9 +177,6 @@ func (tree *NVTreeMem) EndWrite() {
 		panic("tree.isWriting cannot be false! bug here...")
 	}
 	tree.isWriting = false
-	tree.batch.WriteSync()
-	tree.batch.Close()
-	tree.batch = nil
 	tree.mtx.Unlock()
 }
 
@@ -197,20 +188,32 @@ func (tree *NVTreeMem) Set(k []byte, v uint64) {
 	}
 	oldV, oldVExists := tree.bt.PutNewAndGetOld(k, v)
 
-	newK := make([]byte, 0, len(k)+8)
+	if tree.rocksdb == nil {
+		return
+	}
+	newK := make([]byte, 0, 1+len(k)+8)
+	newK = append(newK, byte(0)) //first byte is always zero
 	newK = append(newK, k...)
 	newK = append(newK, tree.currHeight[:]...)
 	var buf [8]byte
 	if oldVExists {
 		binary.LittleEndian.PutUint64(buf[:], oldV)
-		tree.batch.Set(newK, buf[:]) // write a historical value
+		tree.batchSet(newK, buf[:]) // write a historical value
 	} else {
-		tree.batch.Set(newK, []byte{}) // write a historical empty value
+		tree.batchSet(newK, []byte{}) // write a historical empty value
 	}
 
 	binary.LittleEndian.PutUint64(buf[:], v)
 	binary.BigEndian.PutUint64(newK[len(newK)-8:], math.MaxUint64)
-	tree.batch.Set(newK, buf[:]) // write the up-to-date value
+	tree.batchSet(newK, buf[:]) // write the up-to-date value
+}
+
+func (tree *NVTreeMem) batchSet(key, value []byte) {
+	tree.rocksdb.CurrBatch().Set(key, value)
+}
+
+func (tree *NVTreeMem) batchDelete(key []byte) {
+	tree.rocksdb.CurrBatch().Delete(key)
 }
 
 // Get the up-to-date position of k, from the B-Tree
@@ -228,9 +231,9 @@ func (tree *NVTreeMem) GetAtHeight(k []byte, height uint64) (position uint64, ok
 	if h, enable := tree.rocksdb.GetPruneHeight(); enable && height <= h {
 		return 0, false
 	}
-	newK := make([]byte, len(k)+8)
-	copy(newK, k)
-	binary.BigEndian.PutUint64(newK[len(k):], height+1)
+	newK := make([]byte, 1+len(k)+8) // all bytes equal zero
+	copy(newK[1:], k)
+	binary.BigEndian.PutUint64(newK[1+len(k):], height+1)
 	iter := tree.rocksdb.Iterator(newK, nil)
 	defer iter.Close()
 	if !iter.Valid() {
@@ -264,15 +267,19 @@ func (tree *NVTreeMem) Delete(k []byte) {
 	}
 	tree.bt.Delete(k)
 
+	if tree.rocksdb == nil {
+		return
+	}
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], oldV)
-	newK := make([]byte, 0, len(k)+8)
+	newK := make([]byte, 0, 1+len(k)+8)
+	newK = append(newK, byte(0)) //first byte is always zero
 	newK = append(newK, k...)
 	newK = append(newK, tree.currHeight[:]...)
-	tree.batch.Set(newK, buf[:]) // write a historical value
+	tree.batchSet(newK, buf[:]) // write a historical value
 
 	binary.BigEndian.PutUint64(newK[len(newK)-8:], math.MaxUint64)
-	tree.batch.Delete(newK) // delete the up-to-date value
+	tree.batchDelete(newK) // delete the up-to-date value
 }
 
 // Create a forward iterator from the B-Tree
@@ -311,7 +318,3 @@ func (tree *NVTreeMem) ReverseIterator(start, end []byte) Iterator {
 	return iter
 }
 
-// Set the prune height for historical record
-func (tree *NVTreeMem) SetPruneHeight(h uint64) {
-	tree.rocksdb.SetPruneHeight(h)
-}
