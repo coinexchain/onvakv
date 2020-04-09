@@ -3,8 +3,7 @@ package metadb
 import (
 	"encoding/binary"
 
-	dbm "github.com/tendermint/tm-db"
-
+	"github.com/coinexchain/onvakv/indextree"
 	"github.com/coinexchain/onvakv/datatree"
 	"github.com/coinexchain/onvakv/types"
 )
@@ -23,8 +22,7 @@ const (
 )
 
 type MetaDBWithTMDB struct {
-	kvdb  dbm.DB
-	batch dbm.Batch
+	kvdb  *indextree.RocksDB
 
 	currHeight         int64
 	lastPrunedTwig     int64
@@ -35,12 +33,12 @@ type MetaDBWithTMDB struct {
 
 var _ types.MetaDB = (*MetaDBWithTMDB)(nil)
 
-func NewMetaDB(kvdb dbm.DB) *MetaDBWithTMDB {
-	return &MetaDBWithTMDB{kvdb: kvdb, batch: kvdb.NewBatch()}
+func NewMetaDB(kvdb *indextree.RocksDB) *MetaDBWithTMDB {
+	return &MetaDBWithTMDB{kvdb: kvdb}
 }
 
 func (db *MetaDBWithTMDB) Close() {
-	db.kvdb.Close()
+	db.kvdb = nil
 }
 
 func (db *MetaDBWithTMDB) ReloadFromKVDB() {
@@ -79,22 +77,19 @@ func (db *MetaDBWithTMDB) ReloadFromKVDB() {
 func (db *MetaDBWithTMDB) Commit() {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], uint64(db.currHeight))
-	db.batch.Set([]byte{ByteCurrHeight}, buf[:])
+	db.kvdb.CurrBatch().Set([]byte{ByteCurrHeight}, buf[:])
 
 	binary.LittleEndian.PutUint64(buf[:], uint64(db.lastPrunedTwig))
-	db.batch.Set([]byte{ByteLastPrunedTwig}, buf[:])
+	db.kvdb.CurrBatch().Set([]byte{ByteLastPrunedTwig}, buf[:])
 
 	binary.LittleEndian.PutUint64(buf[:], uint64(db.maxSerialNum))
-	db.batch.Set([]byte{ByteMaxSerialNum}, buf[:])
+	db.kvdb.CurrBatch().Set([]byte{ByteMaxSerialNum}, buf[:])
 
 	binary.LittleEndian.PutUint64(buf[:], uint64(db.oldestActiveTwigID))
-	db.batch.Set([]byte{ByteOldestActiveTwigID}, buf[:])
+	db.kvdb.CurrBatch().Set([]byte{ByteOldestActiveTwigID}, buf[:])
 
 	binary.LittleEndian.PutUint64(buf[:], uint64(db.activeEntryCount))
-	db.batch.Set([]byte{ByteActiveEntryCount}, buf[:])
-
-	db.batch.WriteSync()
-	db.batch = db.kvdb.NewBatch()
+	db.kvdb.CurrBatch().Set([]byte{ByteActiveEntryCount}, buf[:])
 }
 
 func (db *MetaDBWithTMDB) SetCurrHeight(h int64) {
@@ -108,7 +103,7 @@ func (db *MetaDBWithTMDB) GetCurrHeight() int64 {
 func (db *MetaDBWithTMDB) SetTwigMtFileSize(size int64) {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], uint64(size))
-	db.batch.Set([]byte{ByteTwigMtFileSize}, buf[:])
+	db.kvdb.CurrBatch().Set([]byte{ByteTwigMtFileSize}, buf[:])
 }
 
 func (db *MetaDBWithTMDB) GetTwigMtFileSize() int64 {
@@ -122,7 +117,7 @@ func (db *MetaDBWithTMDB) GetTwigMtFileSize() int64 {
 func (db *MetaDBWithTMDB) SetEntryFileSize(size int64) {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], uint64(size))
-	db.batch.Set([]byte{ByteEntryFileSize}, buf[:])
+	db.kvdb.CurrBatch().Set([]byte{ByteEntryFileSize}, buf[:])
 }
 
 func (db *MetaDBWithTMDB) GetEntryFileSize() int64 {
@@ -138,7 +133,7 @@ func (db *MetaDBWithTMDB) setTwigHeight(twigID int64, height int64) {
 	binary.LittleEndian.PutUint64(buf[:], uint64(twigID))
 	key := append([]byte{ByteTwigHeight}, buf[:]...)
 	binary.LittleEndian.PutUint64(buf[:], uint64(height))
-	db.batch.Set(key, buf[:])
+	db.kvdb.CurrBatch().Set(key, buf[:])
 }
 
 func (db *MetaDBWithTMDB) GetTwigHeight(twigID int64) int64 {
@@ -220,7 +215,6 @@ func (db *MetaDBWithTMDB) SetIsRunning(isRunning bool) {
 
 func (db *MetaDBWithTMDB) Init() {
 	db.SetIsRunning(false)
-	db.batch = db.kvdb.NewBatch()
 	db.currHeight = 0
 	db.lastPrunedTwig = -1
 	db.maxSerialNum = 0

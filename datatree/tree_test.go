@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// test the init function in tree.go
 func TestTreeInit(t *testing.T) {
 	var L8,L9,L10,L11 [32]byte
 	L9  = sha256.Sum256(append(append([]byte{8}, L8[:]...), L8[:]...))
@@ -92,6 +93,7 @@ func TestTreeInit(t *testing.T) {
 	assert.Equal(t, lvl[20], NullNodeInHigherTree[20])
 }
 
+// test getBit, setBit and clearBit of twig
 func TestTreeTwig(t *testing.T) {
 	twig := &Twig{}
 	for i := 0; i < 2048; i++ {
@@ -112,7 +114,7 @@ func TestTreeTwig(t *testing.T) {
 	}
 }
 
-
+// Test EdgeNodes' serialization and deserialization
 func TestTreeEdgeNode(t *testing.T) {
 	en0 := &EdgeNode{
 		Pos:   Pos(1, 1000),
@@ -163,6 +165,7 @@ func TestTreeMaxLevel(t *testing.T) {
 |0   |1   2   3  .4   .5   6   7   14
 0 1|2 *3 4 5 6 7 8 9.a *b c d e f  13
 */
+// fill tree.nodes and test tree.reapNodes
 func TestTreeReapNodes(t *testing.T) {
 	tree := &Tree{nodes: make(map[NodePos]*[32]byte)}
 	stripe := 16

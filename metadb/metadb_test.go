@@ -5,8 +5,8 @@ import (
 	"os"
 
 	"github.com/stretchr/testify/assert"
-	dbm "github.com/tendermint/tm-db"
 
+	"github.com/coinexchain/onvakv/indextree"
 	"github.com/coinexchain/onvakv/datatree"
 )
 
@@ -15,8 +15,9 @@ func TestMetaDB(t *testing.T) {
 	err := os.RemoveAll("./test.db")
 	assert.Equal(t, nil, err)
 
-	kvdb, err := dbm.NewGoLevelDB("test", ".")
+	kvdb, err := indextree.NewRocksDB("test", ".")
 	assert.Equal(t, nil, err)
+	kvdb.OpenNewBatch()
 	mdb := NewMetaDB(kvdb)
 	mdb.ReloadFromKVDB()
 
@@ -50,6 +51,8 @@ func TestMetaDB(t *testing.T) {
 	mdb.SetEdgeNodes([]byte("edge nodes data"))
 
 	mdb.Commit()
+	kvdb.CloseOldBatch()
+	kvdb.OpenNewBatch()
 
 	assert.Equal(t, int64(1000), mdb.GetTwigMtFileSize())
 	assert.Equal(t, int64(2000), mdb.GetEntryFileSize())
@@ -64,14 +67,17 @@ func TestMetaDB(t *testing.T) {
 	mdb.DeleteTwigHeight(2)
 
 	mdb.Commit()
+	kvdb.CloseOldBatch()
 
 	assert.Equal(t, int64(-1), mdb.GetTwigHeight(2))
 	assert.Equal(t, int64(150), mdb.GetTwigHeight(5))
 
+	kvdb.Close()
 	mdb.Close()
 
-	kvdb, err = dbm.NewGoLevelDB("test", ".")
+	kvdb, err = indextree.NewRocksDB("test", ".")
 	assert.Equal(t, nil, err)
+	kvdb.OpenNewBatch()
 	mdb = NewMetaDB(kvdb)
 	mdb.ReloadFromKVDB()
 
@@ -88,6 +94,8 @@ func TestMetaDB(t *testing.T) {
 	assert.Equal(t, int64(-1), mdb.GetTwigHeight(2))
 	assert.Equal(t, int64(150), mdb.GetTwigHeight(5))
 
+	mdb.Close()
+	kvdb.Close()
 	err = os.RemoveAll("./test.db")
 	assert.Equal(t, nil, err)
 

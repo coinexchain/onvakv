@@ -248,8 +248,8 @@ func (okv *OnvaKV) numOfKeptEntries() int64 {
 }
 
 func (okv *OnvaKV) BeginWrite(height int64) {
-	okv.idxTree.BeginWrite(height)
 	okv.rocksdb.OpenNewBatch()
+	okv.idxTree.BeginWrite(height)
 	okv.meta.SetCurrHeight(height)
 }
 
@@ -386,8 +386,6 @@ func (okv *OnvaKV) EndWrite() {
 		okv.datTree.EvictTwig(twigID)
 		okv.meta.IncrOldestActiveTwigID()
 	}
-	okv.rocksdb.CloseOldBatch()
-	okv.idxTree.EndWrite()
 	okv.rootHash = okv.datTree.EndBlock()
 	okv.k2eCache = &sync.Map{}
 
@@ -395,6 +393,8 @@ func (okv *OnvaKV) EndWrite() {
 	okv.meta.SetEntryFileSize(eS)
 	okv.meta.SetTwigMtFileSize(tS)
 	okv.meta.Commit()
+	okv.idxTree.EndWrite()
+	okv.rocksdb.CloseOldBatch()
 }
 
 func (okv *OnvaKV) InitGuards(startKey, endKey []byte) {
