@@ -214,7 +214,7 @@ func TestTreeReapNodes(t *testing.T) {
 
 }
 
-func generateMT() (mt [4096][32]byte) {
+func generateMT4YoungestTwig() (mt [4096][32]byte) {
 	for i := range mt {
 		for j := 0; j < 32; j+=2 {
 			binary.LittleEndian.PutUint16(mt[i][j:j+2], uint16(i))
@@ -223,7 +223,7 @@ func generateMT() (mt [4096][32]byte) {
 	return
 }
 
-func changeRange(tree *Tree, start, end int) {
+func changeRangeInMT4YoungestTwig(tree *Tree, start, end int) {
 	for i := start; i <= end; i++ {
 		//fmt.Printf("changeAt: %d(%d)\n", i, 2048+i)
 		for j := range tree.mtree4YoungestTwig[2048+i] {
@@ -240,33 +240,33 @@ func TestTreeSyncMT4YoungestTwig(t *testing.T) {
 		youngestTwigID: 0,
 	}
 	tree.activeTwigs[tree.youngestTwigID] = CopyNullTwig()
-	tree.mtree4YoungestTwig = generateMT()
+	tree.mtree4YoungestTwig = generateMT4YoungestTwig()
 	tree.mtree4YTChangeStart = 0
 	tree.mtree4YTChangeEnd = 2047
 	tree.syncMT4YoungestTwig()
 	checkMT(tree.mtree4YoungestTwig)
 
-	changeRange(tree, 0, 0)
+	changeRangeInMT4YoungestTwig(tree, 0, 0)
 	tree.syncMT4YoungestTwig()
 	checkMT(tree.mtree4YoungestTwig)
 
-	changeRange(tree, 2047, 2047)
+	changeRangeInMT4YoungestTwig(tree, 2047, 2047)
 	tree.syncMT4YoungestTwig()
 	checkMT(tree.mtree4YoungestTwig)
 
-	changeRange(tree, 0, 1)
+	changeRangeInMT4YoungestTwig(tree, 0, 1)
 	tree.syncMT4YoungestTwig()
 	checkMT(tree.mtree4YoungestTwig)
 
-	changeRange(tree, 2046, 2047)
+	changeRangeInMT4YoungestTwig(tree, 2046, 2047)
 	tree.syncMT4YoungestTwig()
 	checkMT(tree.mtree4YoungestTwig)
 
-	changeRange(tree, 10, 11)
+	changeRangeInMT4YoungestTwig(tree, 10, 11)
 	tree.syncMT4YoungestTwig()
 	checkMT(tree.mtree4YoungestTwig)
 
-	changeRange(tree, 101, 1100)
+	changeRangeInMT4YoungestTwig(tree, 101, 1100)
 	tree.syncMT4YoungestTwig()
 	checkMT(tree.mtree4YoungestTwig)
 }
@@ -279,7 +279,7 @@ func initNTwigs(tree *Tree, n int64) {
 	tree.youngestTwigID = n - 1
 }
 
-func flipBitsEveryN(tree *Tree, n int64) {
+func flipActiveBitsEveryN(tree *Tree, n int64) {
 	end := (1 + tree.youngestTwigID) * LeafCountInTwig
 	for i := int64(0); i < end; i += n {
 		active := tree.GetActiveBit(i)
@@ -297,41 +297,43 @@ func TestTreeSyncMT4ActiveBits(t *testing.T) {
 	nList2 := []int64{0, 2}
 
 	tree.touchedPosOf512b = make(map[int64]struct{})
-	flipBitsEveryN(tree, 257)
+	flipActiveBitsEveryN(tree, 257)
 	nList := tree.syncMT4ActiveBits()
 	assert.Equal(t, nList0, nList)
 	fmt.Printf("here0 %#v\n", nList)
 	checkAllTwigs(tree)
 
 	tree.touchedPosOf512b = make(map[int64]struct{})
-	flipBitsEveryN(tree, 600)
+	flipActiveBitsEveryN(tree, 600)
 	nList = tree.syncMT4ActiveBits()
 	assert.Equal(t, nList0, nList)
 	fmt.Printf("here1 %#v\n", nList)
 	checkAllTwigs(tree)
 
 	tree.touchedPosOf512b = make(map[int64]struct{})
-	flipBitsEveryN(tree, 3011)
+	flipActiveBitsEveryN(tree, 3011)
 	nList = tree.syncMT4ActiveBits()
 	assert.Equal(t, nList1, nList)
 	fmt.Printf("here2 %#v\n", nList)
 	checkAllTwigs(tree)
 
 	tree.touchedPosOf512b = make(map[int64]struct{})
-	flipBitsEveryN(tree, 5000)
+	flipActiveBitsEveryN(tree, 5000)
 	nList = tree.syncMT4ActiveBits()
 	assert.Equal(t, nList1, nList)
 	fmt.Printf("here3 %#v\n", nList)
 	checkAllTwigs(tree)
 
 	tree.touchedPosOf512b = make(map[int64]struct{})
-	flipBitsEveryN(tree, 9001)
+	flipActiveBitsEveryN(tree, 9001)
 	nList = tree.syncMT4ActiveBits()
 	assert.Equal(t, nList2, nList)
 	fmt.Printf("here4 %#v\n", nList)
 	checkAllTwigs(tree)
 }
 
+// make sure that nodes in range [start, end] exist at FirstLevelAboveTwig,
+// and their upper-level nodes also exist
 func checkNodeExistence(tree *Tree, start, end int64) {
 	maxLevel := calcMaxLevel(end)
 	for level := FirstLevelAboveTwig; level <= maxLevel; level++ {
@@ -348,6 +350,7 @@ func checkNodeExistence(tree *Tree, start, end int64) {
 	}
 }
 
+// create n twigs and sync up their upper nodes
 func initTwigsAndUpperNodes(tree *Tree, n int64) {
 	tree.activeTwigs = make(map[int64]*Twig)
 	nList := make([]int64, 0, int(n))
@@ -366,6 +369,7 @@ func initTwigsAndUpperNodes(tree *Tree, n int64) {
 	tree.syncUpperNodes(nList)
 }
 
+// change the roots of twigs specified in idList to different values
 func changeTwigRoots(tree *Tree, idList []int64) []int64 {
 	nList := make([]int64, 0, len(idList))
 	for _, twigID := range idList {
@@ -401,7 +405,9 @@ func TestTreeSyncUpperNodes(t *testing.T) {
 
 const defaultFileSize = 8*4096*32
 
-func buildTestTree(dirName string, deactSNList []int64) (*Tree, []int64, int64) {
+// build a tree for test: append countBefore entries before applying deactSNList,
+// and append countAfter entries after applying deactSNList
+func buildTestTree(dirName string, deactSNList []int64, countBefore, countAfter int) (*Tree, []int64, int64) {
 	tree := NewEmptyTree(defaultFileSize, dirName)
 	entry := &Entry{
 		Key:        []byte("key"),
@@ -414,7 +420,7 @@ func buildTestTree(dirName string, deactSNList []int64) (*Tree, []int64, int64) 
 	posList := make([]int64, 0, LeafCountInTwig+10)
 	posList = append(posList, tree.AppendEntry(entry))
 
-	for i := 1; i < TwigMask; i++ {
+	for i := 1; i < countBefore; i++ {
 		entry.SerialNum = int64(i)
 		posList = append(posList, tree.AppendEntry(entry))
 	}
@@ -422,24 +428,24 @@ func buildTestTree(dirName string, deactSNList []int64) (*Tree, []int64, int64) 
 		tree.DeactiviateEntry(sn)
 	}
 
-	entry.SerialNum = TwigMask
+	entry.SerialNum = int64(countBefore)
 	posList = append(posList, tree.AppendEntry(entry))
 
-	for i := 0; i < 5; i++ {
+	for i := 0; i < countAfter-1; i++ {
 		entry.SerialNum++
 		posList = append(posList, tree.AppendEntry(entry))
 	}
 
-	tree.EndBlock()
 	return tree, posList, entry.SerialNum
 }
 
 func TestTreeAppendEntry(t *testing.T) {
-	dirName := "./datatree"
+	dirName := "./DataTree"
 	os.RemoveAll(dirName)
 	os.Mkdir(dirName, 0700)
 	deactSNList := []int64{101, 999, 1002}
-	tree, posList, maxSerialNum := buildTestTree(dirName, deactSNList)
+	tree, posList, maxSerialNum := buildTestTree(dirName, deactSNList, TwigMask, 6)
+	tree.EndBlock()
 
 	for i, pos := range posList {
 		entry, snList, _ := tree.entryFile.ReadEntry(pos)

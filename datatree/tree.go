@@ -135,7 +135,7 @@ func (twig *Twig) syncL3(h *Hasher) {
 }
 
 func (twig *Twig) syncTop(h *Hasher) {
-	h.Add(11, twig.twigRoot[:], twig.activeBitsMTL3[:], twig.leafMTRoot[:])
+	h.Add(11, twig.twigRoot[:], twig.leafMTRoot[:], twig.activeBitsMTL3[:])
 }
 
 func (twig *Twig) setBit(offset int) {

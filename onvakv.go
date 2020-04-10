@@ -68,7 +68,7 @@ func NewOnvaKV(dirName string, queryHistory bool) (*OnvaKV, error) {
 		okv.meta.Init()
 	} else if okv.meta.GetIsRunning() { // OnvaKV is *NOT* closed properly
 		oldestActiveTwigID := okv.meta.GetOldestActiveTwigID()
-		youngestTwigID := okv.meta.GetMaxSerialNum()
+		youngestTwigID := okv.meta.GetMaxSerialNum() >> TwigShift
 		bz := okv.meta.GetEdgeNodes()
 		edgeNodes := datatree.BytesToEdgeNodes(bz)
 		okv.datTree = datatree.RecoverTree(defaultFileSize, dirName,

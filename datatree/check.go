@@ -76,7 +76,7 @@ func checkTwig(twig *Twig) {
 	hashEqual("L3", twig.activeBitsMTL3, sha256.Sum256(append([]byte{10},
 	       append(twig.activeBitsMTL2[0][:], twig.activeBitsMTL2[1][:]...)...)))
 	hashEqual("Top", twig.twigRoot, sha256.Sum256(append([]byte{11},
-		append(twig.activeBitsMTL3[:], twig.leafMTRoot[:]...)...)))
+		append(twig.leafMTRoot[:], twig.activeBitsMTL3[:]...)...)))
 }
 
 func checkAllTwigs(tree *Tree) {
