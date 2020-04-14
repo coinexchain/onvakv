@@ -343,26 +343,22 @@ func (tree *Tree) PruneTwigs(startID, endID int64) []byte {
 }
 
 // Remove useless nodes and reap the edge nodes
-func (tree *Tree) reapNodes(startID, endID int64) []byte {
-	if startID%2 != 0 || endID%2 != 0 {
-		panic(fmt.Sprintf("Both startID and endID must be even. Now they are: %d %d", startID, endID))
-	}
-	start := startID >> 1
-	end := endID >> 1
+func (tree *Tree) reapNodes(start, end int64) []byte {
 	var newEdgeNodes []*EdgeNode
 	maxLevel := calcMaxLevel(tree.youngestTwigID)
-	for level := FirstLevelAboveTwig; level <= maxLevel; level++ {
+	for level := FirstLevelAboveTwig-1; level <= maxLevel; level++ {
 		endRound := end
 		if end%2 != 0 {
 			endRound--
 		}
 		pos := Pos(level, endRound)
 		hash, ok := tree.nodes[pos]
-		if !ok {
-			fmt.Printf("What? can not find %d-%d\n", level, end)
+		if ok {
+			edgeNode := &EdgeNode{Pos: pos, Value: (*hash)[:]}
+			newEdgeNodes = append(newEdgeNodes, edgeNode)
+		} else {
+			panic(fmt.Sprintf("What? can not find %d-%d\n", level, end))
 		}
-		edgeNode := &EdgeNode{Pos: pos, Value: (*hash)[:]}
-		newEdgeNodes = append(newEdgeNodes, edgeNode)
 		for i := start-1; i < endRound; i++ { // minus 1 from start to cover some margin nodes
 			pos = Pos(level, i)
 			delete(tree.nodes, pos)
@@ -383,6 +379,10 @@ func (tree *Tree) EndBlock() (rootHash []byte) {
 	// run the pending twig-deletion jobs
 	// they were not deleted earlier becuase syncMT needs their content
 	for _, twigID := range tree.twigsToBeDeleted {
+		// delete the twig and store its twigRoot in nodes
+		pos := Pos(FirstLevelAboveTwig-1, twigID)
+		twig := tree.activeTwigs[twigID]
+		tree.nodes[pos] = &twig.twigRoot
 		delete(tree.activeTwigs, twigID)
 	}
 	tree.twigsToBeDeleted = tree.twigsToBeDeleted[:0] // clear its content
@@ -432,6 +432,20 @@ func maxNPlus1AtLevel(youngestTwigID int64, level int) int64 {
 	return maxN
 }
 
+func (tree *Tree) getTwigRoot(n int64) ([32]byte, bool) {
+	twig, ok := tree.activeTwigs[n]
+	if ok {
+		return twig.twigRoot, true
+	}
+	pos := Pos(FirstLevelAboveTwig-1, n)
+	node, ok := tree.nodes[pos]
+	if ok {
+		return *node, true
+	}
+	var zero [32]byte
+	return zero, false
+}
+
 func (tree *Tree) syncNodesByLevel(level int, nList []int64) []int64 {
 	maxN := maxNAtLevel(tree.youngestTwigID, level)
 	newList := make([]int64, 0, len(nList))
@@ -444,15 +458,16 @@ func (tree *Tree) syncNodesByLevel(level int, nList []int64) []int64 {
 			tree.nodes[nodePos] = &zeroHash
 		}
 		if level == FirstLevelAboveTwig {
-			left := tree.activeTwigs[2*i].twigRoot[:]
-			right := NullTwig.twigRoot[:]
-			if 2*i+1 <= tree.youngestTwigID {
-				right = tree.activeTwigs[2*i+1].twigRoot[:]
-			} else {
-			//	fmt.Printf("Here we need a null right twig %d, youngestTwigID: %d\n", 2*i+1, tree.youngestTwigID)
+			left, ok := tree.getTwigRoot(int64(2*i))
+			if !ok {
+				panic("Cannot find left twig root")
+			}
+			right, ok := tree.getTwigRoot(int64(2*i+1))
+			if !ok {
+				right = NullTwig.twigRoot
 			}
 			parentNode := tree.nodes[nodePos]
-			h.Add(byte(level-1), (*parentNode)[:], left, right)
+			h.Add(byte(level-1), (*parentNode)[:], left[:], right[:])
 			//fmt.Printf("left: %#v right: %#v\n", left, right)
 			//fmt.Printf("New Job: %d-%d %d- %d %d\n", level, i, level-1, 2*i, 2*i+1)
 		} else {

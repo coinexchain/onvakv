@@ -56,23 +56,26 @@ func TestTreeProof(t *testing.T) {
 	dirName := "./DataTree"
 	os.RemoveAll(dirName)
 	os.Mkdir(dirName, 0700)
-	deactSNList := make([]int64, 0, 4096+20)
-	for i := 0; i < 4096; i++ {
+	deactSNList := make([]int64, 0, 2048+20)
+	for i := 0; i < 2048; i++ {
 		deactSNList = append(deactSNList, int64(i))
 	}
 	deactSNList = append(deactSNList, []int64{5000, 5500, 5700, 5813, 6001}...)
 	tree, _, _ := buildTestTree(dirName, deactSNList, TwigMask*4, 1600)
 	tree.EvictTwig(0)
-	tree.EvictTwig(1)
 	tree.EndBlock()
 	CheckHashConsistency(tree)
 
-	require.Nil(t, tree.GetProof(0))
-	require.Nil(t, tree.GetProof(2049))
+	//require.Nil(t, tree.GetProof(0))
+	//require.Nil(t, tree.GetProof(2049))
 
 	maxSN := TwigMask*4+1600
-	for i := 4096; i < maxSN; i++ {
+	for i := 0; i < maxSN; i++ {
+		//fmt.Printf("---------- %d ----------\n", i)
 		proofPath := tree.GetProof(int64(i))
+		if proofPath == nil {
+			panic("Proof not found")
+		}
 		err := proofPath.Check(false)
 		require.Nil(t, err)
 

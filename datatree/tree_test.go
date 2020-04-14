@@ -38,7 +38,7 @@ func TestTreeInit(t *testing.T) {
 	lvl[9] = sha256.Sum256(append(append([]byte{8}, lvl[8][:]...), lvl[8][:]...))
 	lvl[10] = sha256.Sum256(append(append([]byte{9}, lvl[9][:]...), lvl[9][:]...))
 	lvl[11] = sha256.Sum256(append(append([]byte{10}, lvl[10][:]...), lvl[10][:]...))
-	lvl[12] = sha256.Sum256(append(append([]byte{11}, NullTwig.activeBitsMTL3[:]...), lvl[11][:]...))
+	lvl[12] = sha256.Sum256(append(append([]byte{11}, lvl[11][:]...), NullTwig.activeBitsMTL3[:]...))
 	lvl[13] = sha256.Sum256(append(append([]byte{12}, lvl[12][:]...), lvl[12][:]...))
 	lvl[14] = sha256.Sum256(append(append([]byte{13}, lvl[13][:]...), lvl[13][:]...))
 	lvl[15] = sha256.Sum256(append(append([]byte{14}, lvl[14][:]...), lvl[14][:]...))
@@ -168,8 +168,8 @@ func TestTreeMaxLevel(t *testing.T) {
 // fill tree.nodes and test tree.reapNodes
 func TestTreeReapNodes(t *testing.T) {
 	tree := &Tree{nodes: make(map[NodePos]*[32]byte)}
-	stripe := 16
-	for level := FirstLevelAboveTwig; level < FirstLevelAboveTwig+5; level++ {
+	stripe := 32
+	for level := FirstLevelAboveTwig-1; level < FirstLevelAboveTwig+5; level++ {
 		for i := 0; i < stripe; i++ {
 			var zero [32]byte
 			tree.nodes[Pos(int(level), int64(i))] = &zero
@@ -177,21 +177,38 @@ func TestTreeReapNodes(t *testing.T) {
 		stripe >>= 1
 	}
 	tree.youngestTwigID = 15
-	bz := tree.reapNodes(0, 4)
+	bz := tree.reapNodes(0, 3)
 	edgeNodes := BytesToEdgeNodes(bz)
-	assert.Equal(t, 4, len(edgeNodes))
+	assert.Equal(t, 5, len(edgeNodes))
 	var zero [32]byte
-	assert.Equal(t, &EdgeNode{Pos: Pos(13, 2), Value: zero[:]}, edgeNodes[0])
-	assert.Equal(t, &EdgeNode{Pos: Pos(14, 0), Value: zero[:]}, edgeNodes[1])
-	assert.Equal(t, &EdgeNode{Pos: Pos(15, 0), Value: zero[:]}, edgeNodes[2])
-	assert.Equal(t, &EdgeNode{Pos: Pos(16, 0), Value: zero[:]}, edgeNodes[3])
+	assert.Equal(t, &EdgeNode{Pos: Pos(12, 2), Value: zero[:]}, edgeNodes[0])
+	assert.Equal(t, &EdgeNode{Pos: Pos(13, 0), Value: zero[:]}, edgeNodes[1])
+	assert.Equal(t, &EdgeNode{Pos: Pos(14, 0), Value: zero[:]}, edgeNodes[2])
+	assert.Equal(t, &EdgeNode{Pos: Pos(15, 0), Value: zero[:]}, edgeNodes[3])
+	assert.Equal(t, &EdgeNode{Pos: Pos(16, 0), Value: zero[:]}, edgeNodes[4])
+	bz = tree.reapNodes(3, 4)
+	edgeNodes = BytesToEdgeNodes(bz)
+	assert.Equal(t, 5, len(edgeNodes))
+	assert.Equal(t, &EdgeNode{Pos: Pos(12, 4), Value: zero[:]}, edgeNodes[0])
+	assert.Equal(t, &EdgeNode{Pos: Pos(13, 2), Value: zero[:]}, edgeNodes[1])
+	assert.Equal(t, &EdgeNode{Pos: Pos(14, 0), Value: zero[:]}, edgeNodes[2])
+	assert.Equal(t, &EdgeNode{Pos: Pos(15, 0), Value: zero[:]}, edgeNodes[3])
+	assert.Equal(t, &EdgeNode{Pos: Pos(16, 0), Value: zero[:]}, edgeNodes[4])
 	bz = tree.reapNodes(4, 22)
 	edgeNodes = BytesToEdgeNodes(bz)
-	assert.Equal(t, &EdgeNode{Pos: Pos(13, 10), Value: zero[:]}, edgeNodes[0])
-	assert.Equal(t, &EdgeNode{Pos: Pos(14, 4), Value: zero[:]}, edgeNodes[1])
-	assert.Equal(t, &EdgeNode{Pos: Pos(15, 2), Value: zero[:]}, edgeNodes[2])
-	assert.Equal(t, &EdgeNode{Pos: Pos(16, 0), Value: zero[:]}, edgeNodes[3])
+	//for _, edgeNode := range edgeNodes {
+	//	pos := int64(edgeNode.Pos)
+	//	fmt.Printf("Pos(%d, %d) %#v\n", pos>>56, (pos<<8)>>8, edgeNode.Value)
+	//}
+	assert.Equal(t, &EdgeNode{Pos: Pos(12, 22), Value: zero[:]}, edgeNodes[0])
+	assert.Equal(t, &EdgeNode{Pos: Pos(13, 10), Value: zero[:]}, edgeNodes[1])
+	assert.Equal(t, &EdgeNode{Pos: Pos(14, 4), Value: zero[:]}, edgeNodes[2])
+	assert.Equal(t, &EdgeNode{Pos: Pos(15, 2), Value: zero[:]}, edgeNodes[3])
+	assert.Equal(t, &EdgeNode{Pos: Pos(16, 0), Value: zero[:]}, edgeNodes[4])
 
+	for i := 23; i < 32; i++ {
+		assert.Equal(t, zero, *tree.nodes[Pos(12, int64(i))])
+	}
 	assert.Equal(t, zero, *tree.nodes[Pos(13, 10)])
 	assert.Equal(t, zero, *tree.nodes[Pos(13, 11)])
 	assert.Equal(t, zero, *tree.nodes[Pos(13, 12)])
@@ -210,7 +227,7 @@ func TestTreeReapNodes(t *testing.T) {
 	for n := range tree.nodes {
 		fmt.Printf("%d %d\n", int64(n)>>56, (int64(n)<<8)>>8)
 	}
-	assert.Equal(t, 15, len(tree.nodes))
+	assert.Equal(t, 25, len(tree.nodes))
 
 }
 
@@ -392,6 +409,13 @@ func TestTreeSyncUpperNodes(t *testing.T) {
 	checkNodeExistence(tree, 0, 85)
 	fmt.Printf("checkNodeExistence finished\n")
 	checkUpperNodes(tree)
+	for twigID := int64(0); twigID <= 80; twigID++ {
+		// delete the twig and store its twigRoot in nodes
+		pos := Pos(FirstLevelAboveTwig-1, twigID)
+		twig := tree.activeTwigs[twigID]
+		tree.nodes[pos] = &twig.twigRoot
+		delete(tree.activeTwigs, twigID)
+	}
 	bz := tree.reapNodes(0, 80)
 	edgeNodes := BytesToEdgeNodes(bz)
 	for _, en := range edgeNodes {

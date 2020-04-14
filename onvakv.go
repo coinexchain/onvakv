@@ -436,9 +436,6 @@ func (okv *OnvaKV) PruneBeforeHeight(height int64) {
 		end++
 		endHeight = okv.meta.GetTwigHeight(end)
 	}
-	if end%2 != 0 { // end must be an even number
-		end--
-	}
 	if end > start {
 		edgeNodesBytes := okv.datTree.PruneTwigs(start, end)
 		okv.meta.SetEdgeNodes(edgeNodesBytes)

@@ -163,6 +163,10 @@ func (tree *Tree) GetProof(sn int64) *ProofPath {
 	if twigID > tree.youngestTwigID || twigID < 0 {
 		panic(fmt.Sprintf("Invalid sn: %d", sn))
 	}
+	path.UpperPath, path.Root = tree.getUpperPathAndRoot(twigID)
+	if path.UpperPath == nil {
+		return nil
+	}
 	if twigID == tree.youngestTwigID {
 		path.LeftOfTwig = getLeftPathInMem(tree.mtree4YoungestTwig, sn)
 	} else {
@@ -172,33 +176,36 @@ func (tree *Tree) GetProof(sn int64) *ProofPath {
 	if ok {
 		path.RightOfTwig = getRightPath(twig, sn)
 	} else {
-		return nil
+		path.RightOfTwig = getRightPath(&NullTwig, sn)
 	}
-	path.UpperPath, path.Root = tree.getUpperPath(twigID)
 	return path
 }
 
-func (tree *Tree) getUpperPath(twigID int64) ([]ProofNode, [32]byte) {
+func (tree *Tree) getUpperPathAndRoot(twigID int64) (upperPath []ProofNode, root [32]byte) {
 	maxLevel := calcMaxLevel(tree.youngestTwigID)
-	res := make([]ProofNode, 0, maxLevel-FirstLevelAboveTwig+1)
-	peerTwig, ok := tree.activeTwigs[twigID^1]
+	peerHash, ok := tree.getTwigRoot(twigID^1)
 	if !ok {
-		peerTwig = &NullTwig
+		peerHash = NullTwig.twigRoot
 	}
-	res = append(res, ProofNode {
-		SelfHash:   tree.activeTwigs[twigID].twigRoot,
-		PeerHash:   peerTwig.twigRoot,
+	selfHash, ok := tree.getTwigRoot(twigID)
+	if !ok {
+		return
+	}
+	upperPath = make([]ProofNode, 0, maxLevel-FirstLevelAboveTwig+1)
+	upperPath = append(upperPath, ProofNode {
+		SelfHash:   selfHash,
+		PeerHash:   peerHash,
 		PeerAtLeft: (twigID & 1) != 0,
 	})
 	for level, n := FirstLevelAboveTwig, twigID/2; level < maxLevel; level, n = level+1, n/2 {
 		//fmt.Printf("level: %d  n: %d maxLevel: %d ok:%v\n", level, n, maxLevel, ok)
-		res = append(res, ProofNode {
+		upperPath = append(upperPath, ProofNode {
 			SelfHash:   *tree.nodes[Pos(level, n)],
 			PeerHash:   *tree.nodes[Pos(level, n^1)],
 			PeerAtLeft: (n & 1) != 0,
 		})
 	}
-	return res, *tree.nodes[Pos(maxLevel, 0)]
+	return upperPath, *tree.nodes[Pos(maxLevel, 0)]
 }
 
 func getRightPath(twig *Twig, sn int64) (right [3]ProofNode) {
