@@ -123,8 +123,12 @@ func RunFuzz(roundCount int, cfg FuzzConfig, randFilename string) {
 	os.RemoveAll("./idxtree.db")
 	os.RemoveAll("./idxtreeref.db")
 	rs := randsrc.NewRandSrcFromFile(randFilename)
-	trMem := it.NewNVTreeMem()
-	err := trMem.Init("./", func([]byte) {})
+	rocksdb, err := it.NewRocksDB("idxtree", ".")
+	if err != nil {
+		panic(err)
+	}
+	trMem := it.NewNVTreeMem(rocksdb)
+	err = trMem.Init(func([]byte) {})
 	if err != nil {
 		panic(err)
 	}
@@ -140,12 +144,13 @@ func RunFuzz(roundCount int, cfg FuzzConfig, randFilename string) {
 			fmt.Printf("====== Now Round %d ========\n", i)
 		}
 		if h == 0 {
+			rocksdb.OpenNewBatch()
 			trMem.BeginWrite(0)
 			trFuzz.BeginWrite(0)
 		} else {
-			FuzzDelete(trMem, trFuzz, cfg, rs, h)
+			FuzzDelete(rocksdb, trMem, trFuzz, cfg, rs, h)
 		}
-		FuzzInit(trMem, trFuzz, cfg, rs)
+		FuzzInit(rocksdb, trMem, trFuzz, cfg, rs)
 		FuzzQuery(trMem, trFuzz, cfg, rs, h)
 		FuzzIter(trMem, trFuzz, cfg, rs)
 		h += rs.GetUint64()%uint64(cfg.HeightStripe)
@@ -167,7 +172,8 @@ func getRandKey(rs randsrc.RandSrc) []byte {
 	return rs.GetBytes(int(keyLen))
 }
 
-func FuzzDelete(trMem *it.NVTreeMem, trFuzz *NVTreeFuzz, cfg FuzzConfig, rs randsrc.RandSrc, h uint64) {
+func FuzzDelete(rocksdb *it.RocksDB, trMem *it.NVTreeMem, trFuzz *NVTreeFuzz, cfg FuzzConfig, rs randsrc.RandSrc, h uint64) {
+	rocksdb.OpenNewBatch()
 	trMem.BeginWrite(int64(h))
 	trFuzz.BeginWrite(int64(h))
 	for i := 0; i < cfg.DelCount; i++ {
@@ -184,7 +190,7 @@ func FuzzDelete(trMem *it.NVTreeMem, trFuzz *NVTreeFuzz, cfg FuzzConfig, rs rand
 	}
 }
 
-func FuzzInit(trMem *it.NVTreeMem, trFuzz *NVTreeFuzz, cfg FuzzConfig, rs randsrc.RandSrc) {
+func FuzzInit(rocksdb *it.RocksDB, trMem *it.NVTreeMem, trFuzz *NVTreeFuzz, cfg FuzzConfig, rs randsrc.RandSrc) {
 	for i := 0; i < cfg.InitCount; i++ {
 		// set new key/value
 		key, value := getRandKey(rs), rs.GetUint64()
@@ -209,6 +215,7 @@ func FuzzInit(trMem *it.NVTreeMem, trFuzz *NVTreeFuzz, cfg FuzzConfig, rs randsr
 		trFuzz.Set(key, value)
 	}
 	trMem.EndWrite()
+	rocksdb.CloseOldBatch()
 	trFuzz.EndWrite()
 }
 
