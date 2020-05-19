@@ -10,3 +10,4 @@ require (
 	github.com/tecbot/gorocksdb v0.0.0-20191217155057-f0fad39f321c
 	github.com/tendermint/tm-db v0.2.0
 )
+replace github.com/coinexchain/randsrc => ../randsrc
