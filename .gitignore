@@ -28,3 +28,4 @@ log/
 *.o
 datatree/ssdtester/ssdtester
 *.dat
+indextree/b/cppbtree/fuzz/fuzz
