@@ -29,3 +29,4 @@ log/
 datatree/ssdtester/ssdtester
 *.dat
 indextree/b/cppbtree/fuzz/fuzz
+*.go~

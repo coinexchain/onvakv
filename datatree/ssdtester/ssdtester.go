@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	ReadCount = 100*10000
+	ReadCount = 20*10000
 	PageSize = 4096
 )
 
@@ -25,14 +25,15 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	RandWriteFile(pageCount, randFilename)
 
-	//var wg sync.WaitGroup
-	//for i := 0; i < 64; i++ {
-	//	wg.Add(1)
-	//	go RandRead(pageCount, randFilename, byte(i), &wg)
-	//}
-	//wg.Wait()
+	//RandWriteFile(pageCount, randFilename)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go RandRead(pageCount, randFilename, byte(i), &wg)
+	}
+	wg.Wait()
 }
 
 func RandWriteFile(pageCount int, randFilename string) {
@@ -61,7 +62,7 @@ func RandRead(pageCount int, randFilename string, seed byte, wg *sync.WaitGroup)
 	}
 	var buf [4096]byte
 	for i := 0; i < ReadCount; i++ {
-		n := int(rs.GetUint64())%pageCount
+		n := int(rs.GetUint32())%pageCount
 		datFile.ReadAt(buf[:], int64(n)*int64(PageSize))
 		for _, b := range buf[:] {
 			res += b
