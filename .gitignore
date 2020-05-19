@@ -26,3 +26,5 @@ log/
 *.swo
 *.log
 *.o
+datatree/ssdtester/ssdtester
+*.dat

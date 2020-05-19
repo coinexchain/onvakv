@@ -29,14 +29,13 @@ func main() {
 }
 
 type FuzzConfig struct {
-	EndBlockStripe     uint32
-	ReloadEveryNBlock  uint32
-	RecoverEveryNBlock uint32
-	PruneEveryNBlock   uint32
-	KeyLenStripe       uint32
-	ValueLenStripe     uint32
-	DeactiveStripe     uint32
-	MaxActiveCount     uint32
+	EndBlockStripe     uint32 // run EndBlock every n steps
+	ReloadEveryNBlock  uint32 // reload tree from disk every n blocks
+	RecoverEveryNBlock uint32 // recover tree from disk every n blocks
+	PruneEveryNBlock   uint32 // prune the tree every n blocks
+	MaxKVLen           uint32 // max length of key and value
+	DeactiveStripe     uint32 // deactive some entry every n steps
+	MaxActiveCount     uint32 // the maximum count of active entries
 }
 
 var DefaultConfig = FuzzConfig{
@@ -44,8 +43,7 @@ var DefaultConfig = FuzzConfig{
 	ReloadEveryNBlock:  30,
 	RecoverEveryNBlock: 60,
 	PruneEveryNBlock:   20,
-	KeyLenStripe:       10,
-	ValueLenStripe:     20,
+	MaxKVLen:           10,
 	DeactiveStripe:     2,
 	MaxActiveCount:     1024*1024,
 }
@@ -86,9 +84,9 @@ func (ctx *Context) generateRandSN() int64 {
 
 func (ctx *Context) generateRandEntry() *datatree.Entry {
 	e := &datatree.Entry{
-		Key:        ctx.rs.GetBytes(int(ctx.rs.GetUint32()%ctx.cfg.KeyLenStripe)),
-		Value:      ctx.rs.GetBytes(int(ctx.rs.GetUint32()%ctx.cfg.KeyLenStripe)),
-		NextKey:    ctx.rs.GetBytes(int(ctx.rs.GetUint32()%ctx.cfg.KeyLenStripe)),
+		Key:        ctx.rs.GetBytes(int(ctx.rs.GetUint32()%ctx.cfg.MaxKVLen)),
+		Value:      ctx.rs.GetBytes(int(ctx.rs.GetUint32()%ctx.cfg.MaxKVLen)),
+		NextKey:    ctx.rs.GetBytes(int(ctx.rs.GetUint32()%ctx.cfg.MaxKVLen)),
 		Height:     ctx.height,
 		LastHeight: 0,
 		SerialNum:  ctx.serialNum,

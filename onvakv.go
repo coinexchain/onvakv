@@ -430,19 +430,26 @@ func (okv *OnvaKV) InitGuards(startKey, endKey []byte) {
 
 func (okv *OnvaKV) PruneBeforeHeight(height int64) {
 	start := okv.meta.GetLastPrunedTwig() + 1
-	end := start
+	end := start + 1
 	endHeight := okv.meta.GetTwigHeight(end)
+	if endHeight < 0 {
+		return
+	}
 	for endHeight < height && okv.datTree.TwigCanBePruned(end) {
 		end++
 		endHeight = okv.meta.GetTwigHeight(end)
+		if endHeight < 0 {
+			return
+		}
 	}
+	end--
 	if end > start {
 		edgeNodesBytes := okv.datTree.PruneTwigs(start, end)
 		okv.meta.SetEdgeNodes(edgeNodesBytes)
-		for i := start; i <= end; i++ {
+		for i := start; i < end; i++ {
 			okv.meta.DeleteTwigHeight(i)
 		}
-		okv.meta.SetLastPrunedTwig(end)
+		okv.meta.SetLastPrunedTwig(end-1)
 	}
 	okv.rocksdb.SetPruneHeight(uint64(height))
 }
