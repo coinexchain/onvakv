@@ -31,3 +31,5 @@ datatree/ssdtester/ssdtester
 indextree/b/cppbtree/fuzz/fuzz
 *.go~
 indextree/fuzz/fuzz
+*.swn
+datatree/fuzz/fuzz

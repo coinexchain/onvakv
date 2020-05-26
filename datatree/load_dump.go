@@ -87,8 +87,8 @@ func EdgeNodesToBytes(edgeNodes []*EdgeNode) []byte {
 	res := make([]byte, len(edgeNodes)*stripe)
 	for i, node := range edgeNodes {
 		if len(node.Value) != 32 {
-			fmt.Printf("node.Value %#v\n", node.Value)
-			panic("len(node.Value) != 32")
+			s := fmt.Sprintf("node.Value %#v\n", node.Value)
+			panic("len(node.Value) != 32 "+s)
 		}
 		binary.LittleEndian.PutUint64(res[i*stripe:i*stripe+8], uint64(node.Pos))
 		copy(res[i*stripe+8:(i+1)*stripe], node.Value)
@@ -268,7 +268,7 @@ func LoadTree(blockSize int, dirName string) *Tree {
 		if err != nil {
 			panic(err)
 		}
-		fmt.Printf("Twig %d is loaded\n", twigID)
+		//fmt.Printf("Twig %d is loaded\n", twigID)
 		tree.activeTwigs[twigID] = &twig
 		if tree.youngestTwigID < twigID {
 			tree.youngestTwigID = twigID

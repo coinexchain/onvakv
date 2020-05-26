@@ -9,6 +9,10 @@ import (
 	"github.com/coinexchain/randsrc"
 )
 
+const (
+	PruneRatio = 0.5
+)
+
 func main() {
 	if len(os.Args) != 3 {
 		fmt.Printf("Usage: %s <rand-source-file> <round-count>\n", os.Args[0])
@@ -23,7 +27,11 @@ func main() {
 	rs := randsrc.NewRandSrcFromFile(randFilename)
 	ctx := NewContext(DefaultConfig, rs)
 	ctx.initialAppends()
+	fmt.Printf("Initialized\n")
 	for i := 0; i< roundCount; i++ {
+		if i % 10000 == 0 {
+			fmt.Printf("Now %d of %d\n", i, roundCount)
+		}
 		ctx.step()
 	}
 }
@@ -35,6 +43,7 @@ type FuzzConfig struct {
 	PruneEveryNBlock   uint32 // prune the tree every n blocks
 	MaxKVLen           uint32 // max length of key and value
 	DeactiveStripe     uint32 // deactive some entry every n steps
+	DeactiveCount      uint32 // number of deactive try times
 	MaxActiveCount     uint32 // the maximum count of active entries
 }
 
@@ -43,9 +52,10 @@ var DefaultConfig = FuzzConfig{
 	ReloadEveryNBlock:  30,
 	RecoverEveryNBlock: 60,
 	PruneEveryNBlock:   20,
-	MaxKVLen:           10,
+	MaxKVLen:           20,
 	DeactiveStripe:     2,
-	MaxActiveCount:     1024*1024,
+	DeactiveCount:      8,
+	MaxActiveCount:     1*1024*1024,
 }
 
 type Context struct {
@@ -62,8 +72,8 @@ type Context struct {
 }
 
 const (
-	defaultFileSize = 64*1024*1024
-	dirName = "./dtfuzz"
+	defaultFileSize = 16*1024*1024
+	dirName = "./datadir"
 )
 
 func NewContext(cfg FuzzConfig, rs randsrc.RandSrc) *Context {
@@ -76,10 +86,13 @@ func NewContext(cfg FuzzConfig, rs randsrc.RandSrc) *Context {
 	}
 }
 
+func (ctx *Context) oldestSN() int64 {
+	return ctx.oldestTwigID * datatree.LeafCountInTwig
+}
+
 func (ctx *Context) generateRandSN() int64 {
-	oldestSN := ctx.oldestTwigID*datatree.LeafCountInTwig
-	num := ctx.serialNum - oldestSN
-	return oldestSN + int64(ctx.rs.GetUint64()%uint64(num))
+	oldestSN := ctx.oldestSN()
+	return oldestSN + int64(ctx.rs.GetUint64()%uint64(ctx.serialNum - oldestSN))
 }
 
 func (ctx *Context) generateRandEntry() *datatree.Entry {
@@ -91,7 +104,7 @@ func (ctx *Context) generateRandEntry() *datatree.Entry {
 		LastHeight: 0,
 		SerialNum:  ctx.serialNum,
 	}
-	ctx.serialNum += 1
+	ctx.serialNum++
 	return e
 }
 
@@ -103,19 +116,17 @@ func (ctx *Context) initialAppends() {
 	}
 }
 
-func (ctx *Context) run() {
-	ctx.initialAppends()
-}
-
 func (ctx *Context) step() {
-	ctx.activeCount = int64(ctx.cfg.MaxActiveCount/2)
 	entry := ctx.generateRandEntry()
 	ctx.tree.AppendEntry(entry)
+	ctx.activeCount++
 	if ctx.rs.GetUint32() % ctx.cfg.DeactiveStripe == 0 {
-		sn := ctx.generateRandSN()
-		if ctx.tree.GetActiveBit(sn) {
-			ctx.tree.DeactiviateEntry(sn)
-			ctx.activeCount--
+		for i := 0; i < int(ctx.cfg.DeactiveCount); i++ {
+			sn := ctx.generateRandSN()
+			if ctx.tree.GetActiveBit(sn) {
+				ctx.tree.DeactiviateEntry(sn)
+				ctx.activeCount--
+			}
 		}
 	}
 	if ctx.rs.GetUint32() % ctx.cfg.EndBlockStripe == 0 {
@@ -125,13 +136,17 @@ func (ctx *Context) step() {
 
 func (ctx *Context) endBlock() {
 	ctx.height++
+	fmt.Printf("Now EndBlock\n")
+	ctx.tree.EndBlock()
 	datatree.CheckHashConsistency(ctx.tree)
-	if ctx.height % int64(ctx.cfg.ReloadEveryNBlock) == 0 {
-		ctx.reloadTree()
-	}
-	if ctx.height % int64(ctx.cfg.RecoverEveryNBlock) == 0 {
-		ctx.recoverTree()
-	}
+	//if ctx.height % int64(ctx.cfg.ReloadEveryNBlock) == 0 {
+	//	fmt.Printf("Now reloadTree\n")
+	//	ctx.reloadTree()
+	//}
+	//if ctx.height % int64(ctx.cfg.RecoverEveryNBlock) == 0 {
+	//	fmt.Printf("Now recoverTree\n")
+	//	ctx.recoverTree()
+	//}
 	if ctx.height % int64(ctx.cfg.PruneEveryNBlock) == 0 {
 		ctx.pruneTree()
 	}
@@ -159,17 +174,31 @@ func (ctx *Context) recoverTree() {
 }
 
 func (ctx *Context) pruneTree() {
-	for ctx.activeCount > int64(ctx.cfg.MaxActiveCount) || ctx.oldestTwigID%2 != 0 {
+	fmt.Printf("Try pruneTree %f %d %d\n", float64(ctx.activeCount) / float64(ctx.serialNum - ctx.oldestSN()), ctx.activeCount, ctx.serialNum - ctx.oldestSN())
+	for float64(ctx.activeCount) / float64(ctx.serialNum - ctx.oldestSN()) < PruneRatio {
 		entries := ctx.tree.GetActiveEntriesInTwig(ctx.oldestTwigID)
-		ctx.oldestTwigID++
-		ctx.activeCount -= int64(len(entries))
 		for _, entry := range entries {
-			ctx.tree.DeactiviateEntry(entry.SerialNum)
+			sn := entry.SerialNum
+			if ctx.tree.GetActiveBit(sn) {
+				ctx.tree.DeactiviateEntry(sn)
+				entry.SerialNum = ctx.serialNum
+				ctx.serialNum++
+				ctx.tree.AppendEntry(entry)
+			}
 		}
+		ctx.tree.EvictTwig(ctx.oldestTwigID)
+		ctx.oldestTwigID++
 	}
-	bz := ctx.tree.PruneTwigs(ctx.lastPrunedTwigID, ctx.oldestTwigID)
-	ctx.edgeNodes = datatree.BytesToEdgeNodes(bz)
-	ctx.lastPrunedTwigID = ctx.oldestTwigID
+	fmt.Printf("Now oldestTwigID %d serialNum %d\n", ctx.oldestTwigID, ctx.serialNum)
+	ctx.tree.EndBlock()
+	endID := ctx.oldestTwigID - 1
+	ratio := float64(ctx.activeCount) / float64(ctx.serialNum - ctx.oldestSN())
+	fmt.Printf("Now pruneTree(%f) %d %d\n", ratio, ctx.lastPrunedTwigID, endID)
+	if endID - ctx.lastPrunedTwigID >= datatree.MinPruneCount {
+		bz := ctx.tree.PruneTwigs(ctx.lastPrunedTwigID, endID)
+		ctx.edgeNodes = datatree.BytesToEdgeNodes(bz)
+		ctx.lastPrunedTwigID = endID
+	}
 }
 
 

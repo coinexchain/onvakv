@@ -3,6 +3,7 @@ package datatree
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
 
 	"github.com/mmcloughlin/meow"
@@ -167,23 +168,26 @@ func getPaddingSize(length int) int {
 }
 
 func (ef *EntryFile) readMagicBytesAndLength(off int64) (int, []byte) {
-	var buf [8]byte
+	var buf [12]byte
 	err := ef.HPFile.ReadAt(buf[:], off)
 	if err != nil {
 		panic(err)
 	}
-	if !bytes.Equal(buf[:], MagicBytes[:]) {
+	if !bytes.Equal(buf[:8], MagicBytes[:]) {
 		panic("Invalid MagicBytes")
 	}
-	err = ef.HPFile.ReadAt(buf[:4], off+8)
-	if err != nil {
-		panic(err)
-	}
-	length := int(binary.LittleEndian.Uint32(buf[:4]))
+	length := int(binary.LittleEndian.Uint32(buf[8:12]))
 	if length >= MaxEntryBytes {
 		panic("Entry to long")
 	}
-	return length, buf[:4]
+	return length, buf[8:12]
+}
+
+func (ef *EntryFile) SkipEntryPrint(off int64) {
+	length, bz := ef.readMagicBytesAndLength(off)
+	paddingSize := getPaddingSize(length)
+	nextPos := off + 8 /*magicbytes*/ + 4 /*length*/ + int64(length) + 4 /*checksum*/ + int64(paddingSize)
+	fmt.Printf("Fuck length %d %v paddingSize %d nextPos %d\n", length, bz, paddingSize, nextPos)
 }
 
 func (ef *EntryFile) SkipEntry(off int64) int64 {
@@ -199,8 +203,9 @@ func (ef *EntryFile) ReadEntry(off int64) (*Entry, []int64, int64) {
 	h.Write(lenBytes)
 	paddingSize := getPaddingSize(length)
 	nextPos := off + 8 /*magicbytes*/ + 4 /*length*/ + int64(length) + 4 /*checksum*/ + int64(paddingSize)
-	b := make([]byte, length+4+paddingSize)
-	err := ef.HPFile.ReadAt(b, off+12)
+	b := make([]byte, 12+length+4+paddingSize) // include 12 (magicbytes and length)
+	err := ef.HPFile.ReadAt(b, off)
+	b = b[12:] // ignore magicbytes and length
 	if err != nil {
 		panic(err)
 	}
@@ -271,6 +276,10 @@ func (ef *EntryFile) Append(b []byte) (pos int64) {
 	if err != nil {
 		panic(err)
 	}
+	//fmt.Printf("Now Append At: %d len: %d\n", pos, len(b))
+	//if pos == 117440504 {
+	//	fmt.Printf("Fuck %v\n", bb)
+	//}
 	return
 }
 
@@ -278,10 +287,18 @@ func (ef *EntryFile) GetActiveEntriesInTwig(twig *Twig) (res []*Entry) {
 	start := twig.FirstEntryPos
 	for i := 0; i < LeafCountInTwig; i++ {
 		if twig.getBit(i) {
+			//fmt.Printf("Now Read At: %d\n", start)
 			entry, _, next := ef.ReadEntry(start)
 			start = next
 			res = append(res, entry)
 		} else {
+			//fmt.Printf("Now Skip At: %d\n", start)
+			//if start == 117440504 {
+			//	var buf [120]byte
+			//	ef.HPFile.ReadAt(buf[:], start)
+			//	fmt.Printf("Fuck %v\n", buf[:])
+			//	ef.SkipEntryPrint(start)
+			//}
 			start = ef.SkipEntry(start)
 		}
 	}
