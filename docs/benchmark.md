@@ -16,9 +16,11 @@ In each block we create 1000 KV pairs （Key Length = 32 Value Length = 32）
 
 Create N=4096*32=131072 Blocks
 
+Random Read 131072 KV Pairs
+
 |                 | Time used in creation (sec) | size of the database (MB) | Parrallel Read Time (sec) | Serial Read Time (sec) |
 | --------------- | --------------------------- | ------------------------- | ------------------------- | ---------------------- |
 | GoLevelDB       | 2168                        | 4620                      | 13.5                      | 14.3                   |
-| ETH-MPT         |                             |                           |                           |                        |
+| ETH-MPT         | 75683                       | 133748                    | 65                        | 77                     |
 | Tendermint-iavl |                             |                           |                           |                        |
 
