@@ -62,6 +62,7 @@ func TestTreeProof(t *testing.T) {
 	}
 	deactSNList = append(deactSNList, []int64{5000, 5500, 5700, 5813, 6001}...)
 	tree, _, _ := buildTestTree(dirName, deactSNList, TwigMask*4, 1600)
+	fmt.Printf("build finished\n")
 	tree.EvictTwig(0)
 	tree.EndBlock()
 	CheckHashConsistency(tree)

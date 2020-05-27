@@ -181,7 +181,7 @@ func TestTreeReapNodes(t *testing.T) {
 	edgeNodes := BytesToEdgeNodes(bz)
 	assert.Equal(t, 5, len(edgeNodes))
 	var zero [32]byte
-	assert.Equal(t, &EdgeNode{Pos: Pos(12, 2), Value: zero[:]}, edgeNodes[0])
+	assert.Equal(t, &EdgeNode{Pos: Pos(12, 3), Value: zero[:]}, edgeNodes[0])
 	assert.Equal(t, &EdgeNode{Pos: Pos(13, 0), Value: zero[:]}, edgeNodes[1])
 	assert.Equal(t, &EdgeNode{Pos: Pos(14, 0), Value: zero[:]}, edgeNodes[2])
 	assert.Equal(t, &EdgeNode{Pos: Pos(15, 0), Value: zero[:]}, edgeNodes[3])
