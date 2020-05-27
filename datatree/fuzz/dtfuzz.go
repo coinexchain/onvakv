@@ -49,12 +49,12 @@ type FuzzConfig struct {
 
 var DefaultConfig = FuzzConfig{
 	EndBlockStripe:     1000,
-	ReloadEveryNBlock:  30,
-	RecoverEveryNBlock: 60,
+	ReloadEveryNBlock:  39,
+	RecoverEveryNBlock: 66,
 	PruneEveryNBlock:   20,
 	MaxKVLen:           20,
-	DeactiveStripe:     2,
-	DeactiveCount:      8,
+	DeactiveStripe:     3,
+	DeactiveCount:      4,
 	MaxActiveCount:     1*1024*1024,
 }
 
@@ -69,6 +69,7 @@ type Context struct {
 	lastPrunedTwigID int64
 	activeCount      int64
 	height           int64
+	stepCount        int64
 }
 
 const (
@@ -117,36 +118,49 @@ func (ctx *Context) initialAppends() {
 }
 
 func (ctx *Context) step() {
-	entry := ctx.generateRandEntry()
-	ctx.tree.AppendEntry(entry)
-	ctx.activeCount++
 	if ctx.rs.GetUint32() % ctx.cfg.DeactiveStripe == 0 {
 		for i := 0; i < int(ctx.cfg.DeactiveCount); i++ {
 			sn := ctx.generateRandSN()
+			//if datatree.Debug {
+			//	fmt.Printf("Try to deactive %d %v\n", sn, ctx.tree.GetActiveBit(sn))
+			//}
 			if ctx.tree.GetActiveBit(sn) {
 				ctx.tree.DeactiviateEntry(sn)
 				ctx.activeCount--
 			}
 		}
 	}
+	if ctx.activeCount < int64(ctx.cfg.MaxActiveCount) {
+		entry := ctx.generateRandEntry()
+		ctx.tree.AppendEntry(entry) // make sure every Deactivation is followed by AppendEntry
+		ctx.activeCount++
+	}
 	if ctx.rs.GetUint32() % ctx.cfg.EndBlockStripe == 0 {
 		ctx.endBlock()
 	}
+	if ctx.stepCount >= 420000 {
+		datatree.Debug = true
+	}
+	ctx.stepCount++
 }
 
 func (ctx *Context) endBlock() {
 	ctx.height++
-	fmt.Printf("Now EndBlock\n")
-	ctx.tree.EndBlock()
+	//fmt.Printf("Now EndBlock %d\n", ctx.stepCount)
+	_, bz := ctx.tree.EndBlock()
+	if len(bz) != 0 {
+		ctx.edgeNodes = datatree.BytesToEdgeNodes(bz)
+		fmt.Printf("endBlock edgeNodes %#v\n", ctx.edgeNodes)
+	}
 	datatree.CheckHashConsistency(ctx.tree)
 	//if ctx.height % int64(ctx.cfg.ReloadEveryNBlock) == 0 {
 	//	fmt.Printf("Now reloadTree\n")
 	//	ctx.reloadTree()
 	//}
-	//if ctx.height % int64(ctx.cfg.RecoverEveryNBlock) == 0 {
-	//	fmt.Printf("Now recoverTree\n")
-	//	ctx.recoverTree()
-	//}
+	if ctx.height % int64(ctx.cfg.RecoverEveryNBlock) == 0 {
+		fmt.Printf("Now recoverTree\n")
+		ctx.recoverTree()
+	}
 	if ctx.height % int64(ctx.cfg.PruneEveryNBlock) == 0 {
 		ctx.pruneTree()
 	}
@@ -156,6 +170,7 @@ func (ctx *Context) reloadTree() {
 	ctx.tree.Sync()
 	tree1 := datatree.LoadTree(defaultFileSize, dirName)
 
+	datatree.CompareTreeTwigs(ctx.tree, tree1)
 	datatree.CompareTreeNodes(ctx.tree, tree1)
 	datatree.CheckHashConsistency(tree1)
 	ctx.tree.Close()
@@ -164,10 +179,11 @@ func (ctx *Context) reloadTree() {
 
 func (ctx *Context) recoverTree() {
 	ctx.tree.Sync()
+	fmt.Printf("recoverTree edgeNodes %#v\n", ctx.edgeNodes)
 	tree1 := datatree.RecoverTree(defaultFileSize, dirName,
 		ctx.edgeNodes, ctx.oldestTwigID, ctx.serialNum >> datatree.TwigShift)
 
-	datatree.CompareTreeNodes(ctx.tree, tree1)
+	datatree.CompareTreeTwigs(ctx.tree, tree1)
 	datatree.CheckHashConsistency(tree1)
 	ctx.tree.Close()
 	ctx.tree = tree1
@@ -190,13 +206,16 @@ func (ctx *Context) pruneTree() {
 		ctx.oldestTwigID++
 	}
 	fmt.Printf("Now oldestTwigID %d serialNum %d\n", ctx.oldestTwigID, ctx.serialNum)
-	ctx.tree.EndBlock()
+	_, bz := ctx.tree.EndBlock()
+	if len(bz) != 0 {
+		ctx.edgeNodes = datatree.BytesToEdgeNodes(bz)
+		fmt.Printf("endBlock edgeNodes %#v\n", ctx.edgeNodes)
+	}
 	endID := ctx.oldestTwigID - 1
 	ratio := float64(ctx.activeCount) / float64(ctx.serialNum - ctx.oldestSN())
 	fmt.Printf("Now pruneTree(%f) %d %d\n", ratio, ctx.lastPrunedTwigID, endID)
 	if endID - ctx.lastPrunedTwigID >= datatree.MinPruneCount {
-		bz := ctx.tree.PruneTwigs(ctx.lastPrunedTwigID, endID)
-		ctx.edgeNodes = datatree.BytesToEdgeNodes(bz)
+		ctx.tree.PruneTwigs(ctx.lastPrunedTwigID, endID)
 		ctx.lastPrunedTwigID = endID
 	}
 }

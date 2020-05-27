@@ -17,6 +17,16 @@ const MaxEntryBytes int = (1 << 24) - 1
 
 var MagicBytes = [8]byte{byte('I'), byte('L'), byte('O'), byte('V'), byte('E'), byte('Y'), byte('O'), byte('U')}
 
+
+var DummyEntry = Entry{
+	Key:        []byte("dummy"),
+	Value:      []byte("dummy"),
+	NextKey:    []byte("dummy"),
+	Height:     -2,
+	LastHeight: -2,
+	SerialNum:  -2,
+}
+
 func NullEntry() Entry {
 	return Entry{
 		Key:        []byte{},
@@ -26,6 +36,12 @@ func NullEntry() Entry {
 		LastHeight: -1,
 		SerialNum:  -1,
 	}
+}
+
+func isDummyEntry(entry *Entry) bool {
+	return entry.LastHeight == DummyEntry.LastHeight &&
+		entry.Height == DummyEntry.Height &&
+		entry.SerialNum == DummyEntry.SerialNum
 }
 
 // Entry serialization format:
@@ -277,9 +293,9 @@ func (ef *EntryFile) Append(b []byte) (pos int64) {
 		panic(err)
 	}
 	//fmt.Printf("Now Append At: %d len: %d\n", pos, len(b))
-	//if pos == 117440504 {
-	//	fmt.Printf("Fuck %v\n", bb)
-	//}
+	if pos == 106245928 {
+		fmt.Printf("Fuck %v\n", bb)
+	}
 	return
 }
 
@@ -293,12 +309,12 @@ func (ef *EntryFile) GetActiveEntriesInTwig(twig *Twig) (res []*Entry) {
 			res = append(res, entry)
 		} else {
 			//fmt.Printf("Now Skip At: %d\n", start)
-			//if start == 117440504 {
-			//	var buf [120]byte
-			//	ef.HPFile.ReadAt(buf[:], start)
-			//	fmt.Printf("Fuck %v\n", buf[:])
-			//	ef.SkipEntryPrint(start)
-			//}
+			if start == 106245928 {
+				var buf [120]byte
+				ef.HPFile.ReadAt(buf[:], start)
+				fmt.Printf("Fuck %v\n", buf[:])
+				ef.SkipEntryPrint(start)
+			}
 			start = ef.SkipEntry(start)
 		}
 	}

@@ -28,17 +28,21 @@ func checkUpperNodes(tree *Tree) {
 		//fmt.Printf("Checking %d-%d %d- %d %d\n", level, n, level-1, 2*n, 2*n+1)
 		var leftChild, rightChild [32]byte
 		if level == int64(FirstLevelAboveTwig) {
-			leftTwig, ok := tree.activeTwigs[2*n]
+			var ok bool
+			leftChild, ok = tree.getTwigRoot(int64(2*n))
 			if !ok {
 				continue
 			}
-			leftChild = leftTwig.twigRoot
-			rightTwig, ok := tree.activeTwigs[2*n+1]
-			if ok {
-				rightChild = rightTwig.twigRoot
-			} else {
+			rightChild, ok = tree.getTwigRoot(int64(2*n+1))
+			if !ok {
 				rightChild = NullTwig.twigRoot
 			}
+			//if Debug {
+			//	fmt.Printf("rightTwig:%v ok:%v\n", rightChild, ok)
+			//	for i := range tree.activeTwigs {
+			//		fmt.Printf("active %d\n", i)
+			//	}
+			//}
 		} else {
 			leftChildPtr, ok := tree.nodes[Pos(int(level-1), 2*n)]
 			if !ok {

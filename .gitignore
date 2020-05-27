@@ -33,3 +33,5 @@ indextree/b/cppbtree/fuzz/fuzz
 indextree/fuzz/fuzz
 *.swn
 datatree/fuzz/fuzz
+*.swm
+datatree/fuzz/datadir

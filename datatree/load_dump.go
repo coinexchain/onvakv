@@ -83,6 +83,9 @@ func (twig *Twig) Dump(twigID int64, outfile io.Writer) error {
 }
 
 func EdgeNodesToBytes(edgeNodes []*EdgeNode) []byte {
+	if len(edgeNodes) == 0 {
+		return nil
+	}
 	const stripe = 8 + 32
 	res := make([]byte, len(edgeNodes)*stripe)
 	for i, node := range edgeNodes {
@@ -302,8 +305,11 @@ func (tree *Tree) RecoverEntry(pos int64, entry *Entry, deactivedSNList []int64,
 	for _, sn := range deactivedSNList {
 		twigID := sn >> TwigShift
 		if twigID >= oldestActiveTwigID {
-			tree.DeactiviateEntry(sn)
+			tree.activeTwigs[sn >> TwigShift].clearBit(int(sn & TwigMask))
 		}
+	}
+	if isDummyEntry(entry) {
+		return
 	}
 	//update youngestTwigID
 	twigID := entry.SerialNum >> TwigShift
@@ -339,32 +345,49 @@ func (tree *Tree) ScanEntries(oldestActiveTwigID int64, handler types.EntryHandl
 	size := tree.entryFile.Size()
 	for pos < size {
 		entry, deactivedSNList, nextPos := tree.entryFile.ReadEntry(pos)
+		if Debug {
+			if pos == 106245928 {
+				fmt.Printf("Now handle %d pos %d nextPos %d\n", entry.SerialNum, pos, nextPos)
+			}
+		}
 		handler(pos, entry, deactivedSNList)
 		pos = nextPos
 	}
 }
 
-func (tree *Tree) RecoverTwigs(oldestActiveTwigID int64) {
+func (tree *Tree) RecoverTwigs(oldestActiveTwigID int64) []int64 {
 	tree.ScanEntries(oldestActiveTwigID, func(pos int64, entry *Entry, deactivedSNList []int64) {
 		tree.RecoverEntry(pos, entry, deactivedSNList, oldestActiveTwigID)
 	})
 	tree.syncMT4YoungestTwig()
-	tree.syncMT4ActiveBits()
+	//fmt.Printf("RecoverTwigs touchedPosOf512b %v\n", tree.touchedPosOf512b)
+	idList := make([]int, 0, len(tree.activeTwigs))
+	for id := range tree.activeTwigs {
+		idList = append(idList, int(id))
+	}
+	sort.Ints(idList)
+	fmt.Printf("RecoverTwigs activeTwigs %v\n", idList)
+	nList := tree.syncMT4ActiveBits()
 	tree.touchedPosOf512b = make(map[int64]struct{}) // clear the list
+	return nList
 }
 
-func (tree *Tree) RecoverUpperNodes(edgeNodes []*EdgeNode, oldestActiveTwigID int64) {
+func (tree *Tree) RecoverUpperNodes(edgeNodes []*EdgeNode, oldestActiveTwigID int64, nList []int64) {
 	for _, edgeNode := range edgeNodes {
 		var buf [32]byte
 		copy(buf[:], edgeNode.Value)
 		tree.nodes[edgeNode.Pos] = &buf
+		fmt.Printf("EdgeNode %d-%d\n", int64(edgeNode.Pos)>>56, (int64(edgeNode.Pos)<<8)>>8)
 	}
-	nList := make([]int64, 0, int(oldestActiveTwigID-tree.youngestTwigID+2)/2)
-	for i:= oldestActiveTwigID; i <= tree.youngestTwigID; i++ {
-		if len(nList) == 0 || nList[len(nList)-1] != i/2 {
-			nList = append(nList, i/2)
-		}
-	}
+	//////capacity := int(tree.youngestTwigID+2-oldestActiveTwigID)/2
+	//////fmt.Printf("oldestActiveTwigID %d youngestTwigID %d capacity %d\n", oldestActiveTwigID, tree.youngestTwigID, capacity)
+	//////nList := make([]int64, 0, capacity)
+	//////for i:= oldestActiveTwigID; i <= tree.youngestTwigID; i++ {
+	//////	if len(nList) == 0 || nList[len(nList)-1] != i/2 {
+	//////		nList = append(nList, i/2)
+	//////	}
+	//////}
+	fmt.Printf("syncUpperNodes %v\n", nList)
 	tree.syncUpperNodes(nList)
 }
 
@@ -396,23 +419,61 @@ func RecoverTree(blockSize int, dirName string, edgeNodes []*EdgeNode, oldestAct
 	}
 	tree.activeTwigs[oldestActiveTwigID] = CopyNullTwig()
 	tree.mtree4YoungestTwig = NullMT4Twig
-	tree.RecoverTwigs(oldestActiveTwigID)
-	tree.RecoverUpperNodes(edgeNodes, oldestActiveTwigID)
+	nList := tree.RecoverTwigs(oldestActiveTwigID)
+	tree.RecoverUpperNodes(edgeNodes, oldestActiveTwigID, nList)
 	return tree
 }
 
-func CompareTreeNodes(treeA, treeB *Tree) {
-	nodesA := treeA.nodes
-	nodesB := treeB.nodes
-	if len(nodesA) != len(nodesB) {
-		panic("Different nodes count")
-	}
-	for pos := range nodesA {
-		hashA := nodesA[pos]
-		hashB := nodesB[pos]
-		if !bytes.Equal(hashA[:], hashB[:]) {
-			panic("Different Hash")
-		}
+func CompareTreeTwigs(treeA, treeB *Tree) {
+	for twigID, a := range treeA.activeTwigs {
+		b := treeB.activeTwigs[twigID]
+		CompareTwig(twigID, a, b)
 	}
 }
+
+func CompareTreeNodes(treeA, treeB *Tree) {
+	if len(treeA.nodes) != len(treeB.nodes) {
+		panic("Different nodes count")
+	}
+	allSame := true
+	for pos, hashA := range treeA.nodes {
+		hashB := treeB.nodes[pos]
+		if !bytes.Equal(hashA[:], hashB[:]) {
+			fmt.Printf("Different Hash %d-%d", int64(pos)>>56, (int64(pos)<<8)>>8)
+			allSame = false
+		}
+	}
+	if !allSame {
+		panic("Nodes Differ")
+	}
+}
+
+func CompareTwig(twigID int64, a, b *Twig) {
+	if !bytes.Equal(a.activeBits[:], b.activeBits[:]) {
+		panic(fmt.Sprintf("activeBits differ at twig %d %#v %#v", twigID, a.activeBits[:], b.activeBits[:]))
+	}
+	for i := 0; i < len(a.activeBitsMTL1); i++ {
+		if !bytes.Equal(a.activeBitsMTL1[i][:], b.activeBitsMTL1[i][:]) {
+			panic(fmt.Sprintf("activeBitsMTL1[%d] differ at twig %d", i, twigID))
+		}
+	}
+	for i := 0; i < len(a.activeBitsMTL2); i++ {
+		if !bytes.Equal(a.activeBitsMTL2[i][:], b.activeBitsMTL2[i][:]) {
+			panic(fmt.Sprintf("activeBitsMTL2[%d] differ at twig %d", i, twigID))
+		}
+	}
+	if !bytes.Equal(a.activeBitsMTL3[:], b.activeBitsMTL3[:]) {
+		panic(fmt.Sprintf("activeBitsMTL3 differ at twig %d", twigID))
+	}
+	if !bytes.Equal(a.leafMTRoot[:], b.leafMTRoot[:]) {
+		panic(fmt.Sprintf("leafMTRoot differ at twig %d", twigID))
+	}
+	if !bytes.Equal(a.twigRoot[:], b.twigRoot[:]) {
+		panic(fmt.Sprintf("twigRoot differ at twig %d", twigID))
+	}
+	if a.FirstEntryPos != b.FirstEntryPos {
+		panic(fmt.Sprintf("FirstEntryPos differ at twig %d", twigID))
+	}
+}
+
 
