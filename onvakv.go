@@ -2,7 +2,7 @@ package onvakv
 
 import (
 	"bytes"
-	//"fmt"
+	"fmt"
 	"os"
 	"math"
 	"sort"
@@ -32,10 +32,7 @@ type OnvaKV struct {
 }
 
 func NewOnvaKV4Mock() *OnvaKV {
-	kvdb := dbm.NewMemDB()
 	okv := &OnvaKV{k2eCache: &sync.Map{}}
-	okv.meta = metadb.NewMetaDB(kvdb)
-	okv.meta.Init()
 
 	okv.datTree = datatree.NewMockDataTree()
 	okv.idxTree = indextree.NewMockIndexTree()
@@ -46,6 +43,8 @@ func NewOnvaKV4Mock() *OnvaKV {
 		panic(err)
 	}
 
+	okv.meta = metadb.NewMetaDB(okv.rocksdb)
+	okv.rocksdb.OpenNewBatch()
 	return okv
 }
 
@@ -68,7 +67,7 @@ func NewOnvaKV(dirName string, queryHistory bool) (*OnvaKV, error) {
 		okv.meta.Init()
 	} else if okv.meta.GetIsRunning() { // OnvaKV is *NOT* closed properly
 		oldestActiveTwigID := okv.meta.GetOldestActiveTwigID()
-		youngestTwigID := okv.meta.GetMaxSerialNum() >> TwigShift
+		youngestTwigID := okv.meta.GetMaxSerialNum() >> datatree.TwigShift
 		bz := okv.meta.GetEdgeNodes()
 		edgeNodes := datatree.BytesToEdgeNodes(bz)
 		okv.datTree = datatree.RecoverTree(defaultFileSize, dirName,
@@ -386,7 +385,11 @@ func (okv *OnvaKV) EndWrite() {
 		okv.datTree.EvictTwig(twigID)
 		okv.meta.IncrOldestActiveTwigID()
 	}
-	okv.rootHash = okv.datTree.EndBlock()
+	root, edgeNodesBytes := okv.datTree.EndBlock()
+	if len(edgeNodesBytes) != 0 {
+		okv.meta.SetEdgeNodes(edgeNodesBytes)
+	}
+	okv.rootHash = root
 	okv.k2eCache = &sync.Map{}
 
 	eS, tS := okv.datTree.GetFileSizes()
@@ -424,7 +427,12 @@ func (okv *OnvaKV) InitGuards(startKey, endKey []byte) {
 	okv.idxTree.Set(endKey, uint64(pos))
 
 	okv.idxTree.EndWrite()
-	okv.rootHash = okv.datTree.EndBlock()
+	root, edgeNodesBytes := okv.datTree.EndBlock()
+	if len(edgeNodesBytes) != 0 {
+		okv.meta.SetEdgeNodes(edgeNodesBytes)
+	}
+	okv.rootHash = root
+	fmt.Printf("HHH %#v\n", okv.rocksdb)
 	okv.meta.Commit()
 }
 
@@ -444,8 +452,7 @@ func (okv *OnvaKV) PruneBeforeHeight(height int64) {
 	}
 	end--
 	if end > start {
-		edgeNodesBytes := okv.datTree.PruneTwigs(start, end)
-		okv.meta.SetEdgeNodes(edgeNodesBytes)
+		okv.datTree.PruneTwigs(start, end)
 		for i := start; i < end; i++ {
 			okv.meta.DeleteTwigHeight(i)
 		}

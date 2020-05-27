@@ -64,9 +64,9 @@ type DataTree interface {
 	GetActiveEntriesInTwig(twigID int64) []*Entry
 	ScanEntries(oldestActiveTwigID int64, handler EntryHandler)
 	TwigCanBePruned(twigID int64) bool
-	PruneTwigs(startID, endID int64) []byte
+	PruneTwigs(startID, endID int64)
 	GetFileSizes() (int64, int64)
-	EndBlock() []byte
+	EndBlock() ([]byte, []byte)
 	Sync()
 	Close()
 }
