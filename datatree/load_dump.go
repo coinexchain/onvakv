@@ -388,7 +388,9 @@ func (tree *Tree) RecoverUpperNodes(edgeNodes []*EdgeNode, oldestActiveTwigID in
 	//////	}
 	//////}
 	fmt.Printf("syncUpperNodes %v\n", nList)
+	if len(nList) > 0 && nList[0] >= 2438 {Debug = true}
 	tree.syncUpperNodes(nList)
+	Debug = false
 }
 
 func RecoverTree(blockSize int, dirName string, edgeNodes []*EdgeNode, oldestActiveTwigID, youngestTwigID int64) *Tree {

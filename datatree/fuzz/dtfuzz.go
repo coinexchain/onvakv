@@ -24,38 +24,42 @@ func main() {
 		panic(err)
 	}
 
-	rs := randsrc.NewRandSrcFromFile(randFilename)
+	rs := randsrc.NewRandSrcFromFileWithSeed(randFilename, []byte{0})
 	ctx := NewContext(DefaultConfig, rs)
 	ctx.initialAppends()
 	fmt.Printf("Initialized\n")
 	for i := 0; i< roundCount; i++ {
 		if i % 10000 == 0 {
-			fmt.Printf("Now %d of %d\n", i, roundCount)
+			fmt.Printf("Now %d of %d activeCount %d of %d\n", i, roundCount, ctx.activeCount, ctx.cfg.MaxActiveCount)
 		}
 		ctx.step()
 	}
 }
 
 type FuzzConfig struct {
-	EndBlockStripe     uint32 // run EndBlock every n steps
-	ReloadEveryNBlock  uint32 // reload tree from disk every n blocks
-	RecoverEveryNBlock uint32 // recover tree from disk every n blocks
-	PruneEveryNBlock   uint32 // prune the tree every n blocks
-	MaxKVLen           uint32 // max length of key and value
-	DeactiveStripe     uint32 // deactive some entry every n steps
-	DeactiveCount      uint32 // number of deactive try times
-	MaxActiveCount     uint32 // the maximum count of active entries
+	EndBlockStripe          uint32 // run EndBlock every n steps
+	ConsistencyEveryNBlock  uint32 // check consistency every n blocks
+	ReloadEveryNBlock       uint32 // reload tree from disk every n blocks
+	RecoverEveryNBlock      uint32 // recover tree from disk every n blocks
+	PruneEveryNBlock        uint32 // prune the tree every n blocks
+	MaxKVLen                uint32 // max length of key and value
+	DeactiveStripe          uint32 // deactive some entry every n steps
+	DeactiveCount           uint32 // number of deactive try times
+	ProofCount              uint32 // check several proofs at endblock
+	MaxActiveCount          uint32 // the maximum count of active entries
 }
 
 var DefaultConfig = FuzzConfig{
-	EndBlockStripe:     1000,
-	ReloadEveryNBlock:  39,
-	RecoverEveryNBlock: 66,
-	PruneEveryNBlock:   20,
-	MaxKVLen:           20,
-	DeactiveStripe:     3,
-	DeactiveCount:      4,
-	MaxActiveCount:     1*1024*1024,
+	EndBlockStripe:         1000,
+	ConsistencyEveryNBlock: 20,
+	ReloadEveryNBlock:      309,
+	RecoverEveryNBlock:     606,
+	PruneEveryNBlock:       20,
+	MaxKVLen:               20,
+	DeactiveStripe:         3,
+	DeactiveCount:          4,
+	ProofCount:             4,
+	MaxActiveCount:         1*1024*1024,
 }
 
 type Context struct {
@@ -138,9 +142,9 @@ func (ctx *Context) step() {
 	if ctx.rs.GetUint32() % ctx.cfg.EndBlockStripe == 0 {
 		ctx.endBlock()
 	}
-	if ctx.stepCount >= 420000 {
-		datatree.Debug = true
-	}
+	//if ctx.stepCount >= 420000 {
+	//	datatree.Debug = true
+	//}
 	ctx.stepCount++
 }
 
@@ -148,17 +152,37 @@ func (ctx *Context) endBlock() {
 	ctx.height++
 	//fmt.Printf("Now EndBlock %d\n", ctx.stepCount)
 	_, bz := ctx.tree.EndBlock()
+	for i := 0; i < int(ctx.cfg.ProofCount); i++ {
+		sn := ctx.generateRandSN()
+		path := ctx.tree.GetProof(sn)
+		err := path.Check(false)
+		if err != nil {
+			panic(err)
+		}
+		bz := path.ToBytes()
+		path2, err := datatree.BytesToProofPath(bz)
+		if err != nil {
+			panic(err)
+		}
+		err = path2.Check(true)
+		if err != nil {
+			panic(err)
+		}
+	}
 	if len(bz) != 0 {
 		ctx.edgeNodes = datatree.BytesToEdgeNodes(bz)
-		fmt.Printf("endBlock edgeNodes %#v\n", ctx.edgeNodes)
+		//fmt.Printf("endBlock edgeNodes %#v\n", ctx.edgeNodes)
 	}
-	datatree.CheckHashConsistency(ctx.tree)
-	//if ctx.height % int64(ctx.cfg.ReloadEveryNBlock) == 0 {
-	//	fmt.Printf("Now reloadTree\n")
-	//	ctx.reloadTree()
-	//}
-	if ctx.height % int64(ctx.cfg.RecoverEveryNBlock) == 0 {
-		fmt.Printf("Now recoverTree\n")
+	if ctx.height % int64(ctx.cfg.ConsistencyEveryNBlock) == 0 {
+		fmt.Printf("Now CheckHashConsistency\n")
+		datatree.CheckHashConsistency(ctx.tree)
+	}
+	if ctx.height % int64(ctx.cfg.ReloadEveryNBlock) == 0 {
+		fmt.Printf("Now reloadTree\n")
+		ctx.reloadTree()
+	}
+	if (ctx.height % int64(ctx.cfg.RecoverEveryNBlock) == 0) && (ctx.stepCount > 0*1320*10000) {
+		fmt.Printf("Now recoverTree stepCount=%d\n", ctx.stepCount)
 		ctx.recoverTree()
 	}
 	if ctx.height % int64(ctx.cfg.PruneEveryNBlock) == 0 {

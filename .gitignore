@@ -35,3 +35,6 @@ indextree/fuzz/fuzz
 datatree/fuzz/fuzz
 *.swm
 datatree/fuzz/datadir
+*.swl
+*.old
+datatree/a.sh

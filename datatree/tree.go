@@ -312,7 +312,7 @@ func (tree *Tree) clearDeactivedSNList() {
 		}
 		bz := EntryToBytes(DummyEntry, head)
 		tree.entryFile.Append(bz)
-		oldList = oldList[:len(head)]
+		oldList = oldList[len(head):]
 	}
 }
 
@@ -378,6 +378,11 @@ func (tree *Tree) PruneTwigs(startID, endID int64) {
 	tree.removeUselessNodes(startID, endID)
 }
 
+func (tree *Tree) reapNodes(start, end int64) []byte {
+	tree.removeUselessNodes(start, end)
+	return EdgeNodesToBytes(tree.getEdgeNodes(end))
+}
+
 func (tree *Tree) removeUselessNodes(start, end int64) {
 	maxLevel := calcMaxLevel(tree.youngestTwigID)
 	for level := FirstLevelAboveTwig-1; level <= maxLevel; level++ {
@@ -403,11 +408,9 @@ func (tree *Tree) getEdgeNodes(end int64) (newEdgeNodes []*EdgeNode) {
 		}
 		pos := Pos(level, endRound)
 		hash, ok := tree.nodes[pos]
-		fmt.Printf("Try find %d-%d\n", level, end)
 		if ok {
 			edgeNode := &EdgeNode{Pos: pos, Value: (*hash)[:]}
 			newEdgeNodes = append(newEdgeNodes, edgeNode)
-			fmt.Printf("Now find %d-%d\n", level, end)
 		} else {
 			panic(fmt.Sprintf("What? can not find %d-%d\n", level, end))
 		}
@@ -437,9 +440,9 @@ func (tree *Tree) EndBlock() (rootHash, edgeNodesBz []byte) {
 	}
 	if lastDeletedTwigID >= 0 {
 		edgeNodes := tree.getEdgeNodes(lastDeletedTwigID)
-		for _, edgeNode := range edgeNodes {
-			fmt.Printf("Here EdgeNode %d-%d\n", int64(edgeNode.Pos)>>56, (int64(edgeNode.Pos)<<8)>>8)
-		}
+		//for _, edgeNode := range edgeNodes {
+		//	fmt.Printf("Here EdgeNode %d-%d\n", int64(edgeNode.Pos)>>56, (int64(edgeNode.Pos)<<8)>>8)
+		//}
 		edgeNodesBz = EdgeNodesToBytes(edgeNodes)
 	}
 	tree.twigsToBeDeleted = tree.twigsToBeDeleted[:0] // clear its content
@@ -515,7 +518,7 @@ func (tree *Tree) syncNodesByLevel(level int, nList []int64) []int64 {
 	for _, i := range nList {
 		nodePos := Pos(level, i)
 		if _, ok := tree.nodes[nodePos]; !ok {
-			//fmt.Printf("Now create parent node %d-%d\n", level, i)
+			//if Debug {fmt.Printf("Now create parent node %d-%d\n", level, i)}
 			var zeroHash [32]byte
 			tree.nodes[nodePos] = &zeroHash
 		}
@@ -530,8 +533,8 @@ func (tree *Tree) syncNodesByLevel(level int, nList []int64) []int64 {
 			}
 			parentNode := tree.nodes[nodePos]
 			h.Add(byte(level-1), (*parentNode)[:], left[:], right[:])
-			//fmt.Printf("left: %#v right: %#v\n", left, right)
-			//fmt.Printf("New Job: %d-%d %d- %d %d\n", level, i, level-1, 2*i, 2*i+1)
+			//if Debug {fmt.Printf("left: %#v right: %#v\n", left, right)}
+			//if Debug {fmt.Printf("New Job: %d-%d %d- %d %d\n", level, i, level-1, 2*i, 2*i+1)}
 		} else {
 			nodePosL := Pos(level-1, 2*i)
 			nodePosR := Pos(level-1, 2*i+1)
@@ -541,18 +544,20 @@ func (tree *Tree) syncNodesByLevel(level int, nList []int64) []int64 {
 			if _, ok := tree.nodes[nodePosR]; !ok {
 				var h [32]byte
 				copy(h[:], NullNodeInHigherTree[level][:])
-				//fmt.Printf("Here we create a node %d-%d\n", level-1, 2*i+1)
+				if Debug {fmt.Printf("Here we create a node %d-%d\n", level-1, 2*i+1)}
 				tree.nodes[nodePosR] = &h
-				if 2*i != maxN {
-					panic("Not at the right edge, bug here")
+				if 2*i != maxN && 2*i+1 != maxN {
+					s := fmt.Sprintf("Not at the right edge, bug here. %d vs %d", 2*i, maxN)
+					fmt.Println(s)
+					panic(s)
 				}
 			}
 			parentNode := tree.nodes[nodePos]
 			nodeL := tree.nodes[nodePosL]
 			nodeR := tree.nodes[nodePosR]
 			h.Add(byte(level-1), (*parentNode)[:], (*nodeL)[:], (*nodeR)[:])
-			//fmt.Printf("left: %#v right: %#v\n", (*nodeL)[:], (*nodeR)[:])
-			//fmt.Printf("New Job: %d-%d %d- %d %d\n", level, i, level-1, 2*i, 2*i+1)
+			//if Debug {fmt.Printf("left: %#v right: %#v\n", (*nodeL)[:], (*nodeR)[:])}
+			//if Debug {fmt.Printf("New Job: %d-%d %d- %d %d\n", level, i, level-1, 2*i, 2*i+1)}
 		}
 		if len(newList) == 0 || newList[len(newList)-1] != i/2 {
 			newList = append(newList, i/2)
