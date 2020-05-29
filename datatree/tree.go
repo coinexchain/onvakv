@@ -261,7 +261,7 @@ func (tree *Tree) TruncateFiles(entryFileSize, twigMtFileSize int64) {
 }
 
 func (tree *Tree) ReadEntry(pos int64) (entry *Entry) {
-	entry, _, _ = tree.entryFile.ReadEntry(pos, false)
+	entry, _, _ = tree.entryFile.ReadEntry(pos)
 	return
 }
 
@@ -285,25 +285,12 @@ func (tree *Tree) ActiviateEntry(sn int64) {
 	tree.setEntryActiviation(sn, true)
 }
 
-func (tree *Tree) DeactiviateEntry(sn int64) {
+func (tree *Tree) DeactiviateEntry(sn int64) int {
 	//if sn >> TwigShift == 50 {
 	//	fmt.Printf("DeactiviateEntry sn %d twig %d\n", sn, sn >> TwigShift)
 	//}
 	tree.setEntryActiviation(sn, false)
-}
-
-func (tree *Tree) ClearDeactivedSNList() {
-	oldList := tree.deactivedSNList
-	tree.deactivedSNList = tree.deactivedSNList[:0]
-	for len(oldList) > 0 {
-		head := oldList
-		if len(oldList) > DeactivedSNListMaxLen {
-			head = oldList[:DeactivedSNListMaxLen]
-		}
-		bz := EntryToBytes(DummyEntry, head)
-		tree.entryFile.Append(bz)
-		oldList = oldList[len(head):]
-	}
+	return len(tree.deactivedSNList)
 }
 
 func (tree *Tree) AppendEntry(entry *Entry) int64 {
@@ -319,9 +306,6 @@ func (tree *Tree) AppendEntry(entry *Entry) int64 {
 	}
 	tree.mtree4YTChangeEnd = position
 
-	if len(tree.deactivedSNList) > DeactivedSNListMaxLen {
-		tree.ClearDeactivedSNList()
-	}
 	// write the entry while flushing deactivedSNList
 	bz := EntryToBytes(*entry, tree.deactivedSNList)
 	tree.deactivedSNList = tree.deactivedSNList[:0] // clear its content

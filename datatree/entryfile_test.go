@@ -76,22 +76,22 @@ func TestEntryFile(t *testing.T) {
 	ef, err = NewEntryFile(128*1024/*128KB*/, "./entryF")
 	assert.Equal(t, nil, err)
 
-	e, l, next := ef.ReadEntry(pos0, true)
+	e, l, next := ef.ReadEntry(pos0)
 	assert.Equal(t, entries[0], *e)
 	assert.Equal(t, dSNL0, l)
 	assert.Equal(t, pos1, next)
 
-	e, l, next = ef.ReadEntry(pos1, true)
+	e, l, next = ef.ReadEntry(pos1)
 	assert.Equal(t, entries[1], *e)
 	assert.Equal(t, dSNL1, l)
 	assert.Equal(t, pos2, next)
 
-	e, l, next = ef.ReadEntry(pos2, true)
+	e, l, next = ef.ReadEntry(pos2)
 	assert.Equal(t, entries[2], *e)
 	assert.Equal(t, 0, len(l))
 	assert.Equal(t, pos3, next)
 
-	e, l, _ = ef.ReadEntry(pos3, true)
+	e, l, _ = ef.ReadEntry(pos3)
 	assert.Equal(t, entries[3], *e)
 	assert.Equal(t, dSNL3, l)
 

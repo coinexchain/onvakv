@@ -485,7 +485,7 @@ func TestTreeAppendEntry(t *testing.T) {
 	tree.EndBlock()
 
 	for i, pos := range posList {
-		entry, snList, _ := tree.entryFile.ReadEntry(pos, true)
+		entry, snList, _ := tree.entryFile.ReadEntry(pos)
 		assert.Equal(t, int64(i), entry.SerialNum)
 		if i == TwigMask {
 			assert.Equal(t, deactSNList, snList)

@@ -56,11 +56,6 @@ func isDummyEntry(entry *Entry) bool {
 const MSB32 = uint32(1<<31)
 
 func EntryToBytes(entry Entry, deactivedSerialNumList []int64) []byte {
-	lengthMask := uint32(0)
-	if isDummyEntry(&entry) {
-		lengthMask = MSB32
-	}
-
 	length := 4 + 4                                                        // 32b-totalLength and empty magicBytesPos
 	length += 4*3 + len(entry.Key) + len(entry.Value) + len(entry.NextKey) // Three strings
 	length += 8 * 3                                                        // Three int64
@@ -72,7 +67,7 @@ func EntryToBytes(entry Entry, deactivedSerialNumList []int64) []byte {
 
 	magicBytesPosList := getAllPos(b[start:], MagicBytes[:])
 	if len(magicBytesPosList) == 0 {
-		binary.LittleEndian.PutUint32(b[:4], uint32(length-4)|lengthMask)
+		binary.LittleEndian.PutUint32(b[:4], uint32(length-4))
 		binary.LittleEndian.PutUint32(b[4:8], ^uint32(0))
 		return b
 	}
@@ -85,7 +80,7 @@ func EntryToBytes(entry Entry, deactivedSerialNumList []int64) []byte {
 	length += 4 * len(magicBytesPosList)
 	buf := make([]byte, length)
 	// Re-write the new length. minus 4 because the first 4 bytes of length isn't included
-	binary.LittleEndian.PutUint32(buf[:4], uint32(length-4)|lengthMask)
+	binary.LittleEndian.PutUint32(buf[:4], uint32(length-4))
 
 	bytesAdded := 4 * len(magicBytesPosList)
 	var i int
@@ -190,7 +185,7 @@ func getPaddingSize(length int) int {
 	}
 }
 
-func (ef *EntryFile) readMagicBytesAndLength(off int64, skipDummy bool) (lengthInt int64, lengthBytes []byte, newOff int64) {
+func (ef *EntryFile) readMagicBytesAndLength(off int64) (lengthInt int64, lengthBytes []byte) {
 	var buf [12]byte
 	err := ef.HPFile.ReadAt(buf[:], off)
 	if err != nil {
@@ -200,17 +195,10 @@ func (ef *EntryFile) readMagicBytesAndLength(off int64, skipDummy bool) (lengthI
 		panic("Invalid MagicBytes")
 	}
 	length := binary.LittleEndian.Uint32(buf[8:12])
-	if (length & MSB32) != 0 { // skip dummy entries
-		length = length & (^MSB32)
-		if skipDummy {
-			nextPos := getNextPos(off, int64(length))
-			return ef.readMagicBytesAndLength(nextPos, true)
-		}
-	}
 	if int(length) >= MaxEntryBytes {
 		panic("Entry to long")
 	}
-	return int64(length), buf[8:12], off
+	return int64(length), buf[8:12]
 }
 
 func getNextPos(off, length int64) int64 {
@@ -218,8 +206,8 @@ func getNextPos(off, length int64) int64 {
 	return off + 8 /*magicbytes*/ + 4 /*length*/ + int64(length) + 4 /*checksum*/ + int64(paddingSize)
 }
 
-func (ef *EntryFile) ReadEntry(off int64, skipDummy bool) (*Entry, []int64, int64) {
-	length, lenBytes, off := ef.readMagicBytesAndLength(off, skipDummy)
+func (ef *EntryFile) ReadEntry(off int64) (*Entry, []int64, int64) {
+	length, lenBytes := ef.readMagicBytesAndLength(off)
 	h := meow.New32(0)
 	h.Write(lenBytes)
 	paddingSize := getPaddingSize(int(length))
@@ -305,12 +293,12 @@ func (ef *EntryFile) GetActiveEntriesInTwig(twig *Twig) (res []*Entry) {
 	start := twig.FirstEntryPos
 	for i := 0; i < LeafCountInTwig; i++ {
 		if twig.getBit(i) {
-			entry, _, next := ef.ReadEntry(start, true)
+			entry, _, next := ef.ReadEntry(start)
 			start = next
 			res = append(res, entry)
 		} else { // skip an inactive entry
 			var length int64
-			length, _, start = ef.readMagicBytesAndLength(start, true)
+			length, _ = ef.readMagicBytesAndLength(start)
 			start = getNextPos(start, length)
 		}
 	}

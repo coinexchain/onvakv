@@ -341,7 +341,7 @@ func (tree *Tree) ScanEntries(oldestActiveTwigID int64, handler types.EntryHandl
 	pos := tree.twigMtFile.GetFirstEntryPos(oldestActiveTwigID)
 	size := tree.entryFile.Size()
 	for pos < size {
-		entry, deactivedSNList, nextPos := tree.entryFile.ReadEntry(pos, false)
+		entry, deactivedSNList, nextPos := tree.entryFile.ReadEntry(pos)
 		//if Debug {
 		//	if pos == 106245928 {
 		//		fmt.Printf("Now handle %d pos %d nextPos %d\n", entry.SerialNum, pos, nextPos)
