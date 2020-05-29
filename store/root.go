@@ -11,24 +11,6 @@ import (
 
 const CacheSizeLimit = 1024 * 1024
 
-type RootStoreI interface {
-	SetHeight(h int64)
-	Get(key []byte) []byte
-	GetObjCopy(key []byte, ptr *types.Serializable)
-	GetObj(key []byte, ptr *types.Serializable)
-	GetReadOnlyObj(key []byte, ptr *types.Serializable)
-	Has(key []byte) bool
-	PrepareForUpdate(key []byte)
-	PrepareForDeletion(key []byte)
-	Iterator(start, end []byte) types.ObjIterator
-	ReverseIterator(start, end []byte) types.ObjIterator
-	BeginWrite()
-	Set(key, value []byte)
-	SetObj(key []byte, obj types.Serializable)
-	Delete(key []byte)
-	EndWrite()
-}
-
 type RootStore struct {
 	cache       map[string]types.Serializable
 	cacheableFn func(k []byte) bool
@@ -37,7 +19,7 @@ type RootStore struct {
 	storeKeys   map[types.StoreKey]struct{}
 }
 
-var _ RootStoreI = &RootStore{}
+var _ types.RootStoreI = &RootStore{}
 
 func NewRootStore(okv *onvakv.OnvaKV, storeKeys map[types.StoreKey]struct{}, cacheableFn func(k []byte) bool) *RootStore {
 	return &RootStore{

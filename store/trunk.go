@@ -9,7 +9,7 @@ import (
 // We use a new TrunkStore for every block
 type TrunkStore struct {
 	cache     *CacheStore
-	root      RootStoreI
+	root      types.RootStoreI
 	storeKeys map[types.StoreKey]struct{}
 	isWriting int64
 }

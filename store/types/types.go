@@ -60,3 +60,21 @@ type KObjStore interface {
 	Delete(key []byte)
 }
 
+type RootStoreI interface {
+	SetHeight(h int64)
+	Get(key []byte) []byte
+	GetObjCopy(key []byte, ptr *Serializable)
+	GetObj(key []byte, ptr *Serializable)
+	GetReadOnlyObj(key []byte, ptr *Serializable)
+	Has(key []byte) bool
+	PrepareForUpdate(key []byte)
+	PrepareForDeletion(key []byte)
+	Iterator(start, end []byte) ObjIterator
+	ReverseIterator(start, end []byte) ObjIterator
+	BeginWrite()
+	Set(key, value []byte)
+	SetObj(key []byte, obj Serializable)
+	Delete(key []byte)
+	EndWrite()
+}
+

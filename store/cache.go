@@ -136,6 +136,10 @@ func (cs *CacheStore) SetObj(key []byte, obj types.Serializable) {
 	cs.bt.Set(append([]byte{}, key...), v)
 }
 
+func (cs *CacheStore) RealDelete(key []byte) {
+	cs.bt.Delete(key)
+}
+
 func (cs *CacheStore) Delete(key []byte) {
 	v := b.DeletedValue()
 	cs.bt.Set(append([]byte{}, key...), v)
