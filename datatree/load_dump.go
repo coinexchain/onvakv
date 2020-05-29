@@ -83,9 +83,6 @@ func (twig *Twig) Dump(twigID int64, outfile io.Writer) error {
 }
 
 func EdgeNodesToBytes(edgeNodes []*EdgeNode) []byte {
-	if len(edgeNodes) == 0 {
-		return nil
-	}
 	const stripe = 8 + 32
 	res := make([]byte, len(edgeNodes)*stripe)
 	for i, node := range edgeNodes {
@@ -344,12 +341,12 @@ func (tree *Tree) ScanEntries(oldestActiveTwigID int64, handler types.EntryHandl
 	pos := tree.twigMtFile.GetFirstEntryPos(oldestActiveTwigID)
 	size := tree.entryFile.Size()
 	for pos < size {
-		entry, deactivedSNList, nextPos := tree.entryFile.ReadEntry(pos)
-		if Debug {
-			if pos == 106245928 {
-				fmt.Printf("Now handle %d pos %d nextPos %d\n", entry.SerialNum, pos, nextPos)
-			}
-		}
+		entry, deactivedSNList, nextPos := tree.entryFile.ReadEntry(pos, false)
+		//if Debug {
+		//	if pos == 106245928 {
+		//		fmt.Printf("Now handle %d pos %d nextPos %d\n", entry.SerialNum, pos, nextPos)
+		//	}
+		//}
 		handler(pos, entry, deactivedSNList)
 		pos = nextPos
 	}
@@ -366,7 +363,7 @@ func (tree *Tree) RecoverTwigs(oldestActiveTwigID int64) []int64 {
 		idList = append(idList, int(id))
 	}
 	sort.Ints(idList)
-	fmt.Printf("RecoverTwigs activeTwigs %v\n", idList)
+	//fmt.Printf("RecoverTwigs activeTwigs %v\n", idList)
 	nList := tree.syncMT4ActiveBits()
 	tree.touchedPosOf512b = make(map[int64]struct{}) // clear the list
 	return nList
@@ -377,20 +374,12 @@ func (tree *Tree) RecoverUpperNodes(edgeNodes []*EdgeNode, oldestActiveTwigID in
 		var buf [32]byte
 		copy(buf[:], edgeNode.Value)
 		tree.nodes[edgeNode.Pos] = &buf
-		fmt.Printf("EdgeNode %d-%d\n", int64(edgeNode.Pos)>>56, (int64(edgeNode.Pos)<<8)>>8)
+		//fmt.Printf("EdgeNode %d-%d\n", int64(edgeNode.Pos)>>56, (int64(edgeNode.Pos)<<8)>>8)
 	}
-	//////capacity := int(tree.youngestTwigID+2-oldestActiveTwigID)/2
-	//////fmt.Printf("oldestActiveTwigID %d youngestTwigID %d capacity %d\n", oldestActiveTwigID, tree.youngestTwigID, capacity)
-	//////nList := make([]int64, 0, capacity)
-	//////for i:= oldestActiveTwigID; i <= tree.youngestTwigID; i++ {
-	//////	if len(nList) == 0 || nList[len(nList)-1] != i/2 {
-	//////		nList = append(nList, i/2)
-	//////	}
-	//////}
-	fmt.Printf("syncUpperNodes %v\n", nList)
-	if len(nList) > 0 && nList[0] >= 2438 {Debug = true}
+	//fmt.Printf("syncUpperNodes %v\n", nList)
+	//if len(nList) > 0 && nList[0] >= 2438 {Debug = true}
 	tree.syncUpperNodes(nList)
-	Debug = false
+	//Debug = false
 }
 
 func RecoverTree(blockSize int, dirName string, edgeNodes []*EdgeNode, oldestActiveTwigID, youngestTwigID int64) *Tree {

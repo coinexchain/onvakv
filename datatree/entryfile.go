@@ -3,7 +3,7 @@ package datatree
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
+	//"fmt"
 	"math"
 
 	"github.com/mmcloughlin/meow"
@@ -53,7 +53,14 @@ func isDummyEntry(entry *Entry) bool {
 // 32b-checksum
 // padding-zero-bytes
 
+const MSB32 = uint32(1<<31)
+
 func EntryToBytes(entry Entry, deactivedSerialNumList []int64) []byte {
+	lengthMask := uint32(0)
+	if isDummyEntry(&entry) {
+		lengthMask = MSB32
+	}
+
 	length := 4 + 4                                                        // 32b-totalLength and empty magicBytesPos
 	length += 4*3 + len(entry.Key) + len(entry.Value) + len(entry.NextKey) // Three strings
 	length += 8 * 3                                                        // Three int64
@@ -65,7 +72,7 @@ func EntryToBytes(entry Entry, deactivedSerialNumList []int64) []byte {
 
 	magicBytesPosList := getAllPos(b[start:], MagicBytes[:])
 	if len(magicBytesPosList) == 0 {
-		binary.LittleEndian.PutUint32(b[:4], uint32(length-4))
+		binary.LittleEndian.PutUint32(b[:4], uint32(length-4)|lengthMask)
 		binary.LittleEndian.PutUint32(b[4:8], ^uint32(0))
 		return b
 	}
@@ -78,7 +85,7 @@ func EntryToBytes(entry Entry, deactivedSerialNumList []int64) []byte {
 	length += 4 * len(magicBytesPosList)
 	buf := make([]byte, length)
 	// Re-write the new length. minus 4 because the first 4 bytes of length isn't included
-	binary.LittleEndian.PutUint32(buf[:4], uint32(length-4))
+	binary.LittleEndian.PutUint32(buf[:4], uint32(length-4)|lengthMask)
 
 	bytesAdded := 4 * len(magicBytesPosList)
 	var i int
@@ -183,7 +190,7 @@ func getPaddingSize(length int) int {
 	}
 }
 
-func (ef *EntryFile) readMagicBytesAndLength(off int64) (int, []byte) {
+func (ef *EntryFile) readMagicBytesAndLength(off int64, skipDummy bool) (lengthInt int64, lengthBytes []byte, newOff int64) {
 	var buf [12]byte
 	err := ef.HPFile.ReadAt(buf[:], off)
 	if err != nil {
@@ -192,34 +199,32 @@ func (ef *EntryFile) readMagicBytesAndLength(off int64) (int, []byte) {
 	if !bytes.Equal(buf[:8], MagicBytes[:]) {
 		panic("Invalid MagicBytes")
 	}
-	length := int(binary.LittleEndian.Uint32(buf[8:12]))
-	if length >= MaxEntryBytes {
+	length := binary.LittleEndian.Uint32(buf[8:12])
+	if (length & MSB32) != 0 { // skip dummy entries
+		length = length & (^MSB32)
+		if skipDummy {
+			nextPos := getNextPos(off, int64(length))
+			return ef.readMagicBytesAndLength(nextPos, true)
+		}
+	}
+	if int(length) >= MaxEntryBytes {
 		panic("Entry to long")
 	}
-	return length, buf[8:12]
+	return int64(length), buf[8:12], off
 }
 
-func (ef *EntryFile) SkipEntryPrint(off int64) {
-	length, bz := ef.readMagicBytesAndLength(off)
-	paddingSize := getPaddingSize(length)
-	nextPos := off + 8 /*magicbytes*/ + 4 /*length*/ + int64(length) + 4 /*checksum*/ + int64(paddingSize)
-	fmt.Printf("Fuck length %d %v paddingSize %d nextPos %d\n", length, bz, paddingSize, nextPos)
+func getNextPos(off, length int64) int64 {
+	paddingSize := getPaddingSize(int(length))
+	return off + 8 /*magicbytes*/ + 4 /*length*/ + int64(length) + 4 /*checksum*/ + int64(paddingSize)
 }
 
-func (ef *EntryFile) SkipEntry(off int64) int64 {
-	length, _ := ef.readMagicBytesAndLength(off)
-	paddingSize := getPaddingSize(length)
-	nextPos := off + 8 /*magicbytes*/ + 4 /*length*/ + int64(length) + 4 /*checksum*/ + int64(paddingSize)
-	return nextPos
-}
-
-func (ef *EntryFile) ReadEntry(off int64) (*Entry, []int64, int64) {
-	length, lenBytes := ef.readMagicBytesAndLength(off)
+func (ef *EntryFile) ReadEntry(off int64, skipDummy bool) (*Entry, []int64, int64) {
+	length, lenBytes, off := ef.readMagicBytesAndLength(off, skipDummy)
 	h := meow.New32(0)
 	h.Write(lenBytes)
-	paddingSize := getPaddingSize(length)
-	nextPos := off + 8 /*magicbytes*/ + 4 /*length*/ + int64(length) + 4 /*checksum*/ + int64(paddingSize)
-	b := make([]byte, 12+length+4+paddingSize) // include 12 (magicbytes and length)
+	paddingSize := getPaddingSize(int(length))
+	nextPos := getNextPos(off, int64(length))
+	b := make([]byte, 12+int(length)+4+paddingSize) // include 12 (magicbytes and length)
 	err := ef.HPFile.ReadAt(b, off)
 	b = b[12:] // ignore magicbytes and length
 	if err != nil {
@@ -230,7 +235,7 @@ func (ef *EntryFile) ReadEntry(off int64) (*Entry, []int64, int64) {
 		panic("Checksum Error")
 	}
 	var n int
-	for n = 0; n < length; n += 4 { // recover magic bytes in payload
+	for n = 0; n < int(length); n += 4 { // recover magic bytes in payload
 		pos := binary.LittleEndian.Uint32(b[n : n+4])
 		if pos == ^(uint32(0)) {
 			n += 4
@@ -293,9 +298,6 @@ func (ef *EntryFile) Append(b []byte) (pos int64) {
 		panic(err)
 	}
 	//fmt.Printf("Now Append At: %d len: %d\n", pos, len(b))
-	if pos == 106245928 {
-		fmt.Printf("Fuck %v\n", bb)
-	}
 	return
 }
 
@@ -303,19 +305,13 @@ func (ef *EntryFile) GetActiveEntriesInTwig(twig *Twig) (res []*Entry) {
 	start := twig.FirstEntryPos
 	for i := 0; i < LeafCountInTwig; i++ {
 		if twig.getBit(i) {
-			//fmt.Printf("Now Read At: %d\n", start)
-			entry, _, next := ef.ReadEntry(start)
+			entry, _, next := ef.ReadEntry(start, true)
 			start = next
 			res = append(res, entry)
-		} else {
-			//fmt.Printf("Now Skip At: %d\n", start)
-			if start == 106245928 {
-				var buf [120]byte
-				ef.HPFile.ReadAt(buf[:], start)
-				fmt.Printf("Fuck %v\n", buf[:])
-				ef.SkipEntryPrint(start)
-			}
-			start = ef.SkipEntry(start)
+		} else { // skip an inactive entry
+			var length int64
+			length, _, start = ef.readMagicBytesAndLength(start, true)
+			start = getNextPos(start, length)
 		}
 	}
 	return

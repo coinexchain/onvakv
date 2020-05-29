@@ -8,7 +8,8 @@ import (
 	"sort"
 )
 
-var Debug bool
+//var Debug bool
+const Debug = false
 
 const (
 	FirstLevelAboveTwig int = 13
@@ -105,17 +106,6 @@ func init() {
 		node = hash2(byte(i-1), NullNodeInHigherTree[i-1][:], NullNodeInHigherTree[i-1][:])
 		copy(NullNodeInHigherTree[i][:], node)
 	}
-}
-
-func (twig *Twig) syncAll(pos int, h *Hasher) {
-	copy(twig.activeBitsMTL1[0][:], hash2(8, twig.activeBits[32*0:32*1], twig.activeBits[32*1:32*2]))
-	copy(twig.activeBitsMTL1[1][:], hash2(8, twig.activeBits[32*2:32*3], twig.activeBits[32*3:32*4]))
-	copy(twig.activeBitsMTL1[2][:], hash2(8, twig.activeBits[32*4:32*5], twig.activeBits[32*5:32*6]))
-	copy(twig.activeBitsMTL1[3][:], hash2(8, twig.activeBits[32*6:32*7], twig.activeBits[32*7:32*8]))
-	copy(twig.activeBitsMTL2[0][:], hash2(9, twig.activeBitsMTL1[0][:], twig.activeBitsMTL1[1][:]))
-	copy(twig.activeBitsMTL2[1][:], hash2(9, twig.activeBitsMTL1[2][:], twig.activeBitsMTL1[3][:]))
-	copy(twig.activeBitsMTL3[:], hash2(10, twig.activeBitsMTL2[0][:], twig.activeBitsMTL2[1][:]))
-	copy(twig.twigRoot[:], hash2(11, twig.leafMTRoot[:], twig.activeBitsMTL3[:]))
 }
 
 func (twig *Twig) syncL1(pos int, h *Hasher) {
@@ -271,7 +261,7 @@ func (tree *Tree) TruncateFiles(entryFileSize, twigMtFileSize int64) {
 }
 
 func (tree *Tree) ReadEntry(pos int64) (entry *Entry) {
-	entry, _, _ = tree.entryFile.ReadEntry(pos)
+	entry, _, _ = tree.entryFile.ReadEntry(pos, false)
 	return
 }
 
@@ -302,7 +292,7 @@ func (tree *Tree) DeactiviateEntry(sn int64) {
 	tree.setEntryActiviation(sn, false)
 }
 
-func (tree *Tree) clearDeactivedSNList() {
+func (tree *Tree) ClearDeactivedSNList() {
 	oldList := tree.deactivedSNList
 	tree.deactivedSNList = tree.deactivedSNList[:0]
 	for len(oldList) > 0 {
@@ -330,7 +320,7 @@ func (tree *Tree) AppendEntry(entry *Entry) int64 {
 	tree.mtree4YTChangeEnd = position
 
 	if len(tree.deactivedSNList) > DeactivedSNListMaxLen {
-		tree.clearDeactivedSNList()
+		tree.ClearDeactivedSNList()
 	}
 	// write the entry while flushing deactivedSNList
 	bz := EntryToBytes(*entry, tree.deactivedSNList)
@@ -434,7 +424,7 @@ func (tree *Tree) EndBlock() (rootHash, edgeNodesBz []byte) {
 		pos := Pos(FirstLevelAboveTwig-1, twigID)
 		twig := tree.activeTwigs[twigID]
 		tree.nodes[pos] = &twig.twigRoot
-		fmt.Printf("Here delete activeTwig %d-%d\n", FirstLevelAboveTwig-1, twigID)
+		//fmt.Printf("Here delete activeTwig %d-%d\n", FirstLevelAboveTwig-1, twigID)
 		delete(tree.activeTwigs, twigID)
 		lastDeletedTwigID = twigID
 	}
@@ -481,19 +471,6 @@ func maxNAtLevel(youngestTwigID int64, level int) int64 {
 	}
 	shift := level - FirstLevelAboveTwig
 	maxN := youngestTwigID >> shift
-	return maxN
-}
-
-func maxNPlus1AtLevel(youngestTwigID int64, level int) int64 {
-	if level < FirstLevelAboveTwig {
-		panic("level is too small")
-	}
-	shift := level - FirstLevelAboveTwig
-	maxN := youngestTwigID >> shift
-	mask := int64((1<<shift)-1)
-	if (youngestTwigID & mask) != 0 {
-		maxN += 1
-	}
 	return maxN
 }
 
@@ -544,7 +521,7 @@ func (tree *Tree) syncNodesByLevel(level int, nList []int64) []int64 {
 			if _, ok := tree.nodes[nodePosR]; !ok {
 				var h [32]byte
 				copy(h[:], NullNodeInHigherTree[level][:])
-				if Debug {fmt.Printf("Here we create a node %d-%d\n", level-1, 2*i+1)}
+				//if Debug {fmt.Printf("Here we create a node %d-%d\n", level-1, 2*i+1)}
 				tree.nodes[nodePosR] = &h
 				if 2*i != maxN && 2*i+1 != maxN {
 					s := fmt.Sprintf("Not at the right edge, bug here. %d vs %d", 2*i, maxN)

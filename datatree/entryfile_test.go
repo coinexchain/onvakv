@@ -1,16 +1,12 @@
 package datatree
 
 import (
+	//"fmt"
 	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
-
-//func (ef *EntryFile) SkipEntry(off int64) int64 {
-//func (ef *EntryFile) ReadEntry(off int64) (*Entry, []uint64, int64) {
-//func NewEntryFile(blockSize int, dirName string) (res EntryFile, err error) {
-//func (ef *EntryFile) GetActiveEntriesInTwig(twig *Twig) (res []*Entry) {
 
 
 func makeEntries() []Entry {
@@ -68,6 +64,10 @@ func TestEntryFile(t *testing.T) {
 		ef.Append(bz1)
 		ef.Append(bz2)
 		ef.Append(bz3)
+		//fmt.Printf("pos for 0: %d\n", ef.Append(bz0))
+		//fmt.Printf("pos for 1: %d\n", ef.Append(bz1))
+		//fmt.Printf("pos for 2: %d\n", ef.Append(bz2))
+		//fmt.Printf("pos for 3: %d\n", ef.Append(bz3))
 	}
 
 	ef.Sync()
@@ -76,27 +76,24 @@ func TestEntryFile(t *testing.T) {
 	ef, err = NewEntryFile(128*1024/*128KB*/, "./entryF")
 	assert.Equal(t, nil, err)
 
-	e, l, next := ef.ReadEntry(pos0)
+	e, l, next := ef.ReadEntry(pos0, true)
 	assert.Equal(t, entries[0], *e)
 	assert.Equal(t, dSNL0, l)
 	assert.Equal(t, pos1, next)
 
-	e, l, next = ef.ReadEntry(pos1)
+	e, l, next = ef.ReadEntry(pos1, true)
 	assert.Equal(t, entries[1], *e)
 	assert.Equal(t, dSNL1, l)
 	assert.Equal(t, pos2, next)
 
-	e, l, next = ef.ReadEntry(pos2)
+	e, l, next = ef.ReadEntry(pos2, true)
 	assert.Equal(t, entries[2], *e)
 	assert.Equal(t, 0, len(l))
 	assert.Equal(t, pos3, next)
 
-	e, l, _ = ef.ReadEntry(pos3)
+	e, l, _ = ef.ReadEntry(pos3, true)
 	assert.Equal(t, entries[3], *e)
 	assert.Equal(t, dSNL3, l)
-
-	assert.Equal(t, pos2, ef.SkipEntry(pos1))
-	assert.Equal(t, pos3, ef.SkipEntry(pos2))
 
 	twig := &Twig{
 		FirstEntryPos: pos3,

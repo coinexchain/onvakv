@@ -349,6 +349,19 @@ func TestTreeSyncMT4ActiveBits(t *testing.T) {
 	checkAllTwigs(tree)
 }
 
+func maxNPlus1AtLevel(youngestTwigID int64, level int) int64 {
+	if level < FirstLevelAboveTwig {
+		panic("level is too small")
+	}
+	shift := level - FirstLevelAboveTwig
+	maxN := youngestTwigID >> shift
+	mask := int64((1<<shift)-1)
+	if (youngestTwigID & mask) != 0 {
+		maxN += 1
+	}
+	return maxN
+}
+
 // make sure that nodes in range [start, end] exist at FirstLevelAboveTwig,
 // and their upper-level nodes also exist
 func checkNodeExistence(tree *Tree, start, end int64) {
@@ -472,7 +485,7 @@ func TestTreeAppendEntry(t *testing.T) {
 	tree.EndBlock()
 
 	for i, pos := range posList {
-		entry, snList, _ := tree.entryFile.ReadEntry(pos)
+		entry, snList, _ := tree.entryFile.ReadEntry(pos, true)
 		assert.Equal(t, int64(i), entry.SerialNum)
 		if i == TwigMask {
 			assert.Equal(t, deactSNList, snList)

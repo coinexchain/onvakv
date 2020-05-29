@@ -1,4 +1,4 @@
-package main
+package fuzz
 
 import (
 	"fmt"
@@ -13,13 +13,9 @@ const (
 	PruneRatio = 0.5
 )
 
-func main() {
-	if len(os.Args) != 3 {
-		fmt.Printf("Usage: %s <rand-source-file> <round-count>\n", os.Args[0])
-		return
-	}
-	randFilename := os.Args[1]
-	roundCount, err := strconv.Atoi(os.Args[2])
+func runTest() {
+	randFilename := os.Getenv("RANDFILE")
+	roundCount, err := strconv.Atoi(os.Getenv("RANDCOUNT"))
 	if err != nil {
 		panic(err)
 	}
@@ -45,8 +41,11 @@ type FuzzConfig struct {
 	MaxKVLen                uint32 // max length of key and value
 	DeactiveStripe          uint32 // deactive some entry every n steps
 	DeactiveCount           uint32 // number of deactive try times
+	MassDeactiveStripe      uint32 // deactive many entries every n steps
 	ProofCount              uint32 // check several proofs at endblock
 	MaxActiveCount          uint32 // the maximum count of active entries
+	MagicBytesInKey         uint32 // chance that keys have magicbytes
+	MagicBytesInValue       uint32 // chance that value have magicbytes
 }
 
 var DefaultConfig = FuzzConfig{
@@ -58,8 +57,11 @@ var DefaultConfig = FuzzConfig{
 	MaxKVLen:               20,
 	DeactiveStripe:         3,
 	DeactiveCount:          4,
+	MassDeactiveStripe:     6000,
 	ProofCount:             4,
 	MaxActiveCount:         1*1024*1024,
+	MagicBytesInKey:        1000,
+	MagicBytesInValue:      2000,
 }
 
 type Context struct {
@@ -109,6 +111,14 @@ func (ctx *Context) generateRandEntry() *datatree.Entry {
 		LastHeight: 0,
 		SerialNum:  ctx.serialNum,
 	}
+	if ctx.rs.GetUint32()%ctx.cfg.MagicBytesInKey == 0 && len(e.Key) > 8 {
+		pos := int(ctx.rs.GetUint32())%(len(e.Key)-8)
+		copy(e.Key[pos:], datatree.MagicBytes[:])
+	}
+	if ctx.rs.GetUint32()%ctx.cfg.MagicBytesInValue == 0 && len(e.Value) > 8 {
+		pos := int(ctx.rs.GetUint32())%(len(e.Value)-8)
+		copy(e.Value[pos:], datatree.MagicBytes[:])
+	}
 	ctx.serialNum++
 	return e
 }
@@ -128,6 +138,16 @@ func (ctx *Context) step() {
 			//if datatree.Debug {
 			//	fmt.Printf("Try to deactive %d %v\n", sn, ctx.tree.GetActiveBit(sn))
 			//}
+			if ctx.tree.GetActiveBit(sn) {
+				ctx.tree.DeactiviateEntry(sn)
+				ctx.activeCount--
+			}
+		}
+	}
+	if ctx.rs.GetUint32() % ctx.cfg.MassDeactiveStripe == 0 {
+		fmt.Printf("Now MassDeactive\n")
+		for i := 0; i < 4*datatree.DeactivedSNListMaxLen; i++ {
+			sn := ctx.generateRandSN()
 			if ctx.tree.GetActiveBit(sn) {
 				ctx.tree.DeactiviateEntry(sn)
 				ctx.activeCount--
@@ -219,6 +239,9 @@ func (ctx *Context) pruneTree() {
 		entries := ctx.tree.GetActiveEntriesInTwig(ctx.oldestTwigID)
 		for _, entry := range entries {
 			sn := entry.SerialNum
+			if sn < 0 || sn > (1<<31) {
+				fmt.Printf("Why? sn=%d\n", sn)
+			}
 			if ctx.tree.GetActiveBit(sn) {
 				ctx.tree.DeactiviateEntry(sn)
 				entry.SerialNum = ctx.serialNum
@@ -233,7 +256,7 @@ func (ctx *Context) pruneTree() {
 	_, bz := ctx.tree.EndBlock()
 	if len(bz) != 0 {
 		ctx.edgeNodes = datatree.BytesToEdgeNodes(bz)
-		fmt.Printf("endBlock edgeNodes %#v\n", ctx.edgeNodes)
+		//fmt.Printf("endBlock edgeNodes %#v\n", ctx.edgeNodes)
 	}
 	endID := ctx.oldestTwigID - 1
 	ratio := float64(ctx.activeCount) / float64(ctx.serialNum - ctx.oldestSN())
