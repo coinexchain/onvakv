@@ -305,9 +305,6 @@ func (tree *Tree) RecoverEntry(pos int64, entry *Entry, deactivedSNList []int64,
 			tree.activeTwigs[sn >> TwigShift].clearBit(int(sn & TwigMask))
 		}
 	}
-	if isDummyEntry(entry) {
-		return
-	}
 	//update youngestTwigID
 	twigID := entry.SerialNum >> TwigShift
 	tree.youngestTwigID = twigID

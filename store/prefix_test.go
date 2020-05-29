@@ -1,6 +1,7 @@
 package store
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -157,6 +158,9 @@ func TestPrefix(t *testing.T) {
 	iter.Next()
 	assert.Equal(t, false, iter.Valid())
 	iter.Close()
+
+	okv.Close()
+	os.RemoveAll("./rocksdb.db")
 }
 
 

@@ -18,13 +18,15 @@ const MaxEntryBytes int = (1 << 24) - 1
 var MagicBytes = [8]byte{byte('I'), byte('L'), byte('O'), byte('V'), byte('E'), byte('Y'), byte('O'), byte('U')}
 
 
-var DummyEntry = Entry{
-	Key:        []byte("dummy"),
-	Value:      []byte("dummy"),
-	NextKey:    []byte("dummy"),
-	Height:     -2,
-	LastHeight: -2,
-	SerialNum:  -2,
+func DummyEntry(sn int64) *Entry {
+	return &Entry{
+		Key:        []byte("dummy"),
+		Value:      []byte("dummy"),
+		NextKey:    []byte("dummy"),
+		Height:     -2,
+		LastHeight: -2,
+		SerialNum:  sn,
+	}
 }
 
 func NullEntry() Entry {
@@ -36,12 +38,6 @@ func NullEntry() Entry {
 		LastHeight: -1,
 		SerialNum:  -1,
 	}
-}
-
-func isDummyEntry(entry *Entry) bool {
-	return entry.LastHeight == DummyEntry.LastHeight &&
-		entry.Height == DummyEntry.Height &&
-		entry.SerialNum == DummyEntry.SerialNum
 }
 
 // Entry serialization format:

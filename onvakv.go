@@ -2,7 +2,7 @@ package onvakv
 
 import (
 	"bytes"
-	"fmt"
+	//"fmt"
 	"os"
 	"math"
 	"sort"
@@ -23,12 +23,13 @@ const (
 )
 
 type OnvaKV struct {
-	meta     types.MetaDB
-	idxTree  types.IndexTree
-	datTree  types.DataTree
-	rocksdb  *indextree.RocksDB
-	rootHash []byte
-	k2eCache *sync.Map
+	meta          types.MetaDB
+	idxTree       types.IndexTree
+	datTree       types.DataTree
+	rocksdb       *indextree.RocksDB
+	rootHash      []byte
+	k2eCache      *sync.Map
+	cachedEntries []*EntryX
 }
 
 func NewOnvaKV4Mock() *OnvaKV {
@@ -51,7 +52,10 @@ func NewOnvaKV4Mock() *OnvaKV {
 func NewOnvaKV(dirName string, queryHistory bool) (*OnvaKV, error) {
 	_, err := os.Stat(dirName)
 	dirNotExists := os.IsNotExist(err)
-	okv := &OnvaKV{k2eCache: &sync.Map{}}
+	okv := &OnvaKV{
+		k2eCache:      &sync.Map{},
+		cachedEntries: make([]*EntryX, 0, 2000),
+	}
 	if dirNotExists {
 		os.Mkdir(dirName, 0700)
 	}
@@ -76,13 +80,13 @@ func NewOnvaKV(dirName string, queryHistory bool) (*OnvaKV, error) {
 		okv.datTree = datatree.LoadTree(defaultFileSize, dirName)
 	}
 
-	if queryHistory {
+	if queryHistory { // use rocksdb to keep the historical index
 		okv.idxTree = indextree.NewNVTreeMem(okv.rocksdb)
 		err = okv.idxTree.Init(nil)
 		if err != nil {
 			return nil, err
 		}
-	} else {
+	} else { // only latest index, no historical index at all
 		okv.idxTree = indextree.NewNVTreeMem(nil)
 		oldestActiveTwigID := okv.meta.GetOldestActiveTwigID()
 		okv.datTree.ScanEntries(oldestActiveTwigID, func(pos int64, entry *Entry, _ []int64) {
@@ -171,7 +175,7 @@ func (okv *OnvaKV) PrepareForUpdate(k []byte) {
 	_, ok = okv.k2eCache.Load(kStr)
 	if !ok {
 		//fmt.Printf("Now we add entry to k2e(prevEntry.NextKey): %s(%#v)\n", kStr, prevEntry.NextKey)
-		okv.k2eCache.Store(kStr, nil)
+		okv.k2eCache.Store(kStr, nil) // we do not need next entry's value, so here we store nil
 	} else {
 		//fmt.Printf("Now we hit k2eCache: %s(%#v)\n", kStr, prevEntry.NextKey)
 	}
@@ -207,7 +211,7 @@ func (okv *OnvaKV) PrepareForDeletion(k []byte) (findIt bool) {
 	kStr = string(entry.NextKey)
 	_, ok = okv.k2eCache.Load(kStr)
 	if !ok {
-		okv.k2eCache.Store(kStr, nil)
+		okv.k2eCache.Store(kStr, nil) // we do not need next entry's value, so here we store nil
 	}
 	return
 }
@@ -306,46 +310,45 @@ func getNext(cachedEntries []*EntryX, i int) int {
 }
 
 func (okv *OnvaKV) update() {
-	cachedEntries := make([]*EntryX, 0, 2000)
 	okv.k2eCache.Range(func(key, value interface{}) bool {
 		if value == nil {
 			keyStr := key.(string)
-		        cachedEntries = append(cachedEntries, makeFakeEntryX(keyStr))
+		        okv.cachedEntries = append(okv.cachedEntries, makeFakeEntryX(keyStr))
 		} else {
 			entryX := value.(*EntryX)
-		        cachedEntries = append(cachedEntries, entryX)
+		        okv.cachedEntries = append(okv.cachedEntries, entryX)
 		}
 		return true
 	})
-	sort.Slice(cachedEntries, func(i,j int) bool {
-		return bytes.Compare(cachedEntries[i].EntryPtr.Key, cachedEntries[j].EntryPtr.Key) < 0
+	sort.Slice(okv.cachedEntries, func(i,j int) bool {
+		return bytes.Compare(okv.cachedEntries[i].EntryPtr.Key, okv.cachedEntries[j].EntryPtr.Key) < 0
 	})
 	// set NextKey to correct values and mark IsModified
-	for i, entryX := range cachedEntries {
+	for i, entryX := range okv.cachedEntries {
 		if entryX.Operation != types.OpNone && entryX.EntryPtr.SerialNum == math.MaxInt64 {
 			panic("Operate on a fake entry")
 		}
 		if entryX.Operation == types.OpDelete {
 			entryX.IsModified = true
-			next := getNext(cachedEntries, i)
-			nextKey := cachedEntries[next].EntryPtr.Key
-			prev := getPrev(cachedEntries, i)
-			cachedEntries[prev].EntryPtr.NextKey = nextKey
-			cachedEntries[prev].IsModified = true
+			next := getNext(okv.cachedEntries, i)
+			nextKey := okv.cachedEntries[next].EntryPtr.Key
+			prev := getPrev(okv.cachedEntries, i)
+			okv.cachedEntries[prev].EntryPtr.NextKey = nextKey
+			okv.cachedEntries[prev].IsModified = true
 		} else if entryX.Operation == types.OpInsertOrChange {
 			entryX.IsModified = true
-			next := getNext(cachedEntries, i)
-			entryX.EntryPtr.NextKey = cachedEntries[next].EntryPtr.Key
-			prev := getPrev(cachedEntries, i)
-			cachedEntries[prev].EntryPtr.NextKey = entryX.EntryPtr.Key
-			cachedEntries[prev].IsModified = true
+			next := getNext(okv.cachedEntries, i)
+			entryX.EntryPtr.NextKey = okv.cachedEntries[next].EntryPtr.Key
+			prev := getPrev(okv.cachedEntries, i)
+			okv.cachedEntries[prev].EntryPtr.NextKey = entryX.EntryPtr.Key
+			okv.cachedEntries[prev].IsModified = true
 			//fmt.Printf("this: %s(%#v) prev %d: %s(%#v) next %d: %s(%#v)\n", entryX.EntryPtr.Key, entryX.EntryPtr.Key,
-			//	prev, cachedEntries[prev].EntryPtr.Key, cachedEntries[prev].EntryPtr.Key,
-			//	next,  cachedEntries[next].EntryPtr.Key, cachedEntries[next].EntryPtr.Key)
+			//	prev, okv.cachedEntries[prev].EntryPtr.Key, okv.cachedEntries[prev].EntryPtr.Key,
+			//	next,  okv.cachedEntries[next].EntryPtr.Key, okv.cachedEntries[next].EntryPtr.Key)
 		}
 	}
 	// update stored data
-	for _, entryX := range cachedEntries {
+	for _, entryX := range okv.cachedEntries {
 		if !entryX.IsModified {
 			continue
 		}
@@ -353,10 +356,10 @@ func (okv *OnvaKV) update() {
 		if entryX.Operation == types.OpDelete {
 			//fmt.Printf("Now we deactive %d for deletion\n", ptr.SerialNum)
 			okv.idxTree.Delete(ptr.Key)
-			okv.datTree.DeactiviateEntry(ptr.SerialNum)
+			okv.DeactiviateEntry(ptr.SerialNum)
 		} else {
 			if ptr.SerialNum >= 0 { // if this entry already exists
-				okv.datTree.DeactiviateEntry(ptr.SerialNum)
+				okv.DeactiviateEntry(ptr.SerialNum)
 			}
 			ptr.LastHeight = ptr.Height
 			ptr.Height = okv.meta.GetCurrHeight()
@@ -369,6 +372,17 @@ func (okv *OnvaKV) update() {
 	}
 }
 
+func (okv *OnvaKV) DeactiviateEntry(sn int64) {
+	pendingDeactCount := okv.datTree.DeactiviateEntry(sn)
+	if pendingDeactCount > datatree.DeactivedSNListMaxLen {
+		sn := okv.meta.GetMaxSerialNum()
+		okv.meta.IncrMaxSerialNum()
+		entry := datatree.DummyEntry(sn)
+		okv.datTree.AppendEntry(entry)
+		okv.datTree.DeactiviateEntry(sn)
+	}
+}
+
 func (okv *OnvaKV) EndWrite() {
 	okv.update()
 	for okv.numOfKeptEntries() > okv.meta.GetActiveEntryCount()*KeptEntriesToActiveEntriesRation &&
@@ -376,7 +390,7 @@ func (okv *OnvaKV) EndWrite() {
 		twigID := okv.meta.GetOldestActiveTwigID()
 		entries := okv.datTree.GetActiveEntriesInTwig(twigID)
 		for _, e := range entries {
-			okv.datTree.DeactiviateEntry(e.SerialNum)
+			okv.DeactiviateEntry(e.SerialNum)
 			e.SerialNum = okv.meta.GetMaxSerialNum()
 			okv.meta.IncrMaxSerialNum()
 			pos := okv.datTree.AppendEntry(e)
@@ -390,7 +404,8 @@ func (okv *OnvaKV) EndWrite() {
 		okv.meta.SetEdgeNodes(edgeNodesBytes)
 	}
 	okv.rootHash = root
-	okv.k2eCache = &sync.Map{}
+	okv.k2eCache = &sync.Map{} // clear content
+	okv.cachedEntries = okv.cachedEntries[:0] // clear content
 
 	eS, tS := okv.datTree.GetFileSizes()
 	okv.meta.SetEntryFileSize(eS)
@@ -432,7 +447,6 @@ func (okv *OnvaKV) InitGuards(startKey, endKey []byte) {
 		okv.meta.SetEdgeNodes(edgeNodesBytes)
 	}
 	okv.rootHash = root
-	fmt.Printf("HHH %#v\n", okv.rocksdb)
 	okv.meta.Commit()
 }
 

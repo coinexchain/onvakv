@@ -19,7 +19,7 @@ const (
 	nodesPath = "nodes.dat"
 	mtree4YTPath = "mtree4YT.dat"
 	twigsPath = "twigs.dat"
-	DeactivedSNListMaxLen = 2000
+	DeactivedSNListMaxLen = 50
 )
 
 /*

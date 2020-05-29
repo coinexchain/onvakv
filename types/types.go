@@ -32,14 +32,6 @@ type Iterator interface {
 	Close()
 }
 
-//type UpdateTask struct {
-//	TaskKind  int
-//	PrevEntry *Entry
-//	CurrEntry *Entry
-//	Key       []byte
-//	Value     []byte
-//}
-
 type IndexTree interface {
 	Init(repFn func([]byte)) error
 	BeginWrite(height int64)
@@ -56,7 +48,7 @@ type IndexTree interface {
 type EntryHandler func(pos int64, entry *Entry, deactivedSNList []int64)
 
 type DataTree interface {
-	DeactiviateEntry(sn int64)
+	DeactiviateEntry(sn int64) int
 	AppendEntry(entry *Entry) int64
 	ReadEntry(pos int64) *Entry
 	GetActiveBit(sn int64) bool

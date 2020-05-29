@@ -48,8 +48,8 @@ func (cs *CacheStore) Get(key []byte) (res []byte, status types.CacheStatus) {
 		status = types.JustDeleted
 	} else {
 		obj := v.GetObj()
-		bz, ok := obj.([]byte)
-		if ok {
+		bz, isRawBytes := obj.([]byte)
+		if isRawBytes {
 			res = bz
 		} else {
 			res = obj.(types.Serializable).ToBytes()

@@ -21,9 +21,10 @@ func NewMockDataTree() *MockDataTree {
 	return tree
 }
 
-func (dt *MockDataTree) DeactiviateEntry(sn int64) {
+func (dt *MockDataTree) DeactiviateEntry(sn int64) int {
 	twigID := sn >> TwigShift
 	dt.twigs[twigID].activeBits[sn&TwigMask] = false
+	return 0
 }
 
 func (dt *MockDataTree) AppendEntry(entry *Entry) int64 {

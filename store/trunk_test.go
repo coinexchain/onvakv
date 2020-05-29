@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -219,8 +220,10 @@ func TestTrunk(t *testing.T) {
 	ts = root.GetTrunkStore()
 	check2()
 
-
 	ts.Close(false)
+
+	okv.Close()
+	os.RemoveAll("./rocksdb.db")
 }
 
 //func (ts *TrunkStore) Has(key []byte) bool {
