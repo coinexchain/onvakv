@@ -81,7 +81,7 @@ func TestTreeInit(t *testing.T) {
 		assert.Equal(t, lvl[10], NullMT4Twig[stripe+i])
 	}
 	assert.Equal(t, lvl[11], NullMT4Twig[1])
-	assert.Equal(t, lvl[11], NullTwig.leafMTRoot)
+	assert.Equal(t, lvl[11], NullTwig.leftRoot)
 	assert.Equal(t, lvl[12], NullTwig.twigRoot)
 	assert.Equal(t, lvl[13], NullNodeInHigherTree[13])
 	assert.Equal(t, lvl[14], NullNodeInHigherTree[14])
@@ -165,7 +165,7 @@ func TestTreeMaxLevel(t *testing.T) {
 |0   |1   2   3  .4   .5   6   7   14
 0 1|2 *3 4 5 6 7 8 9.a *b c d e f  13
 */
-// fill tree.nodes and test tree.reapNodes
+// fill tree.nodes and test tree.ReapNodes
 func TestTreeReapNodes(t *testing.T) {
 	tree := &Tree{nodes: make(map[NodePos]*[32]byte)}
 	stripe := 32
@@ -177,7 +177,7 @@ func TestTreeReapNodes(t *testing.T) {
 		stripe >>= 1
 	}
 	tree.youngestTwigID = 15
-	bz := tree.reapNodes(0, 3)
+	bz := tree.ReapNodes(0, 3)
 	edgeNodes := BytesToEdgeNodes(bz)
 	assert.Equal(t, 5, len(edgeNodes))
 	var zero [32]byte
@@ -186,7 +186,7 @@ func TestTreeReapNodes(t *testing.T) {
 	assert.Equal(t, &EdgeNode{Pos: Pos(14, 0), Value: zero[:]}, edgeNodes[2])
 	assert.Equal(t, &EdgeNode{Pos: Pos(15, 0), Value: zero[:]}, edgeNodes[3])
 	assert.Equal(t, &EdgeNode{Pos: Pos(16, 0), Value: zero[:]}, edgeNodes[4])
-	bz = tree.reapNodes(3, 4)
+	bz = tree.ReapNodes(3, 4)
 	edgeNodes = BytesToEdgeNodes(bz)
 	assert.Equal(t, 5, len(edgeNodes))
 	assert.Equal(t, &EdgeNode{Pos: Pos(12, 4), Value: zero[:]}, edgeNodes[0])
@@ -194,7 +194,7 @@ func TestTreeReapNodes(t *testing.T) {
 	assert.Equal(t, &EdgeNode{Pos: Pos(14, 0), Value: zero[:]}, edgeNodes[2])
 	assert.Equal(t, &EdgeNode{Pos: Pos(15, 0), Value: zero[:]}, edgeNodes[3])
 	assert.Equal(t, &EdgeNode{Pos: Pos(16, 0), Value: zero[:]}, edgeNodes[4])
-	bz = tree.reapNodes(4, 22)
+	bz = tree.ReapNodes(4, 22)
 	edgeNodes = BytesToEdgeNodes(bz)
 	//for _, edgeNode := range edgeNodes {
 	//	pos := int64(edgeNode.Pos)
@@ -429,7 +429,7 @@ func TestTreeSyncUpperNodes(t *testing.T) {
 		tree.nodes[pos] = &twig.twigRoot
 		delete(tree.activeTwigs, twigID)
 	}
-	bz := tree.reapNodes(0, 80)
+	bz := tree.ReapNodes(0, 80)
 	edgeNodes := BytesToEdgeNodes(bz)
 	for _, en := range edgeNodes {
 		n := int64(en.Pos)

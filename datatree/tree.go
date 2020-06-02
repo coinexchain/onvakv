@@ -26,7 +26,7 @@ const (
                  ____TwigRoot___                Level_12
                 /               \
 	       /                \
-1      leafMTRoot               activeBitsMTL3   Level_11
+1       leftRoot                activeBitsMTL3   Level_11
 2	Level_10	2	activeBitsMTL2
 4	Level_9		4	activeBitsMTL1
 8	Level_8    8*32bytes	activeBits
@@ -61,7 +61,7 @@ type Twig struct {
 	activeBitsMTL1 [4][32]byte
 	activeBitsMTL2 [2][32]byte
 	activeBitsMTL3 [32]byte
-	leafMTRoot     [32]byte
+	leftRoot       [32]byte
 	twigRoot       [32]byte
 	FirstEntryPos  int64
 }
@@ -95,7 +95,7 @@ func init() {
 		nullHash = hash2(level, nullHash, nullHash)
 		level++
 	}
-	copy(NullTwig.leafMTRoot[:], NullMT4Twig[1][:])
+	copy(NullTwig.leftRoot[:], NullMT4Twig[1][:])
 
 	NullTwig.syncTop(&h)
 	h.Run()
@@ -139,7 +139,7 @@ func (twig *Twig) syncL3(h *Hasher) {
 }
 
 func (twig *Twig) syncTop(h *Hasher) {
-	h.Add(11, twig.twigRoot[:], twig.leafMTRoot[:], twig.activeBitsMTL3[:])
+	h.Add(11, twig.twigRoot[:], twig.leftRoot[:], twig.activeBitsMTL3[:])
 }
 
 func (twig *Twig) setBit(offset int) {
@@ -343,16 +343,16 @@ func (tree *Tree) TwigCanBePruned(twigID int64) bool {
 }
 
 // Prune the twigs between startID and endID
-func (tree *Tree) PruneTwigs(startID, endID int64) {
+func (tree *Tree) PruneTwigs(startID, endID int64) []byte {
 	if endID - startID < MinPruneCount {
 		panic(fmt.Sprintf("The count of pruned twigs is too small: %d", endID-startID))
 	}
 	tree.entryFile.PruneHead(tree.twigMtFile.GetFirstEntryPos(endID))
 	tree.twigMtFile.PruneHead(endID * TwigMtSize)
-	tree.removeUselessNodes(startID, endID)
+	return tree.ReapNodes(startID, endID)
 }
 
-func (tree *Tree) reapNodes(start, end int64) []byte {
+func (tree *Tree) ReapNodes(start, end int64) []byte {
 	tree.removeUselessNodes(start, end)
 	return EdgeNodesToBytes(tree.getEdgeNodes(end))
 }
@@ -397,27 +397,21 @@ func (tree *Tree) EvictTwig(twigID int64) {
 	tree.twigsToBeDeleted = append(tree.twigsToBeDeleted, twigID)
 }
 
-func (tree *Tree) EndBlock() (rootHash, edgeNodesBz []byte) {
+func (tree *Tree) EndBlock() (rootHash []byte) {
 	// sync up the merkle tree
 	rootHash = tree.syncMT()
 	// run the pending twig-deletion jobs
 	// they were not deleted earlier becuase syncMT needs their content
-	lastDeletedTwigID := int64(-1)
 	for _, twigID := range tree.twigsToBeDeleted {
 		// delete the twig and store its twigRoot in nodes
 		pos := Pos(FirstLevelAboveTwig-1, twigID)
 		twig := tree.activeTwigs[twigID]
 		tree.nodes[pos] = &twig.twigRoot
-		//fmt.Printf("Here delete activeTwig %d-%d\n", FirstLevelAboveTwig-1, twigID)
+		//leftRoot := tree.twigMtFile.GetHashNode(twigID, 1)
+		//twigRoot := hash2(11, leftRoot[:], NullTwig.activeBitsMTL3[:])
+		//fmt.Printf("Here delete activeTwig %d-%d twigRoot: %v\n", FirstLevelAboveTwig-1, twigID, twig.twigRoot)
+		//fmt.Printf("calculated twigRoot: %v\n", twigRoot)
 		delete(tree.activeTwigs, twigID)
-		lastDeletedTwigID = twigID
-	}
-	if lastDeletedTwigID >= 0 {
-		edgeNodes := tree.getEdgeNodes(lastDeletedTwigID)
-		//for _, edgeNode := range edgeNodes {
-		//	fmt.Printf("Here EdgeNode %d-%d\n", int64(edgeNode.Pos)>>56, (int64(edgeNode.Pos)<<8)>>8)
-		//}
-		edgeNodesBz = EdgeNodesToBytes(edgeNodes)
 	}
 	tree.twigsToBeDeleted = tree.twigsToBeDeleted[:0] // clear its content
 	tree.entryFile.Sync()
@@ -614,6 +608,6 @@ func (tree *Tree) syncMT4YoungestTwig() {
 	}
 	tree.mtree4YTChangeStart = -1 // reset its value
 	tree.mtree4YTChangeEnd = 0
-	copy(tree.activeTwigs[tree.youngestTwigID].leafMTRoot[:], tree.mtree4YoungestTwig[1][:])
+	copy(tree.activeTwigs[tree.youngestTwigID].leftRoot[:], tree.mtree4YoungestTwig[1][:])
 }
 

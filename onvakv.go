@@ -74,8 +74,8 @@ func NewOnvaKV(dirName string, queryHistory bool) (*OnvaKV, error) {
 		youngestTwigID := okv.meta.GetMaxSerialNum() >> datatree.TwigShift
 		bz := okv.meta.GetEdgeNodes()
 		edgeNodes := datatree.BytesToEdgeNodes(bz)
-		okv.datTree = datatree.RecoverTree(defaultFileSize, dirName,
-			edgeNodes, oldestActiveTwigID, youngestTwigID)
+		okv.datTree = datatree.RecoverTree(defaultFileSize, dirName, edgeNodes,
+			okv.meta.GetLastPrunedTwig(), oldestActiveTwigID, youngestTwigID)
 	} else { // OnvaKV is closed properly
 		okv.datTree = datatree.LoadTree(defaultFileSize, dirName)
 	}
@@ -399,10 +399,7 @@ func (okv *OnvaKV) EndWrite() {
 		okv.datTree.EvictTwig(twigID)
 		okv.meta.IncrOldestActiveTwigID()
 	}
-	root, edgeNodesBytes := okv.datTree.EndBlock()
-	if len(edgeNodesBytes) != 0 {
-		okv.meta.SetEdgeNodes(edgeNodesBytes)
-	}
+	root := okv.datTree.EndBlock()
 	okv.rootHash = root
 	okv.k2eCache = &sync.Map{} // clear content
 	okv.cachedEntries = okv.cachedEntries[:0] // clear content
@@ -442,11 +439,7 @@ func (okv *OnvaKV) InitGuards(startKey, endKey []byte) {
 	okv.idxTree.Set(endKey, uint64(pos))
 
 	okv.idxTree.EndWrite()
-	root, edgeNodesBytes := okv.datTree.EndBlock()
-	if len(edgeNodesBytes) != 0 {
-		okv.meta.SetEdgeNodes(edgeNodesBytes)
-	}
-	okv.rootHash = root
+	okv.rootHash = okv.datTree.EndBlock()
 	okv.meta.Commit()
 }
 
@@ -466,7 +459,8 @@ func (okv *OnvaKV) PruneBeforeHeight(height int64) {
 	}
 	end--
 	if end > start {
-		okv.datTree.PruneTwigs(start, end)
+		edgeNodesBytes := okv.datTree.PruneTwigs(start, end)
+		okv.meta.SetEdgeNodes(edgeNodesBytes)
 		for i := start; i < end; i++ {
 			okv.meta.DeleteTwigHeight(i)
 		}

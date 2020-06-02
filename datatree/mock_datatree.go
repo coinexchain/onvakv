@@ -78,15 +78,16 @@ func (dt *MockDataTree) TwigCanBePruned(twigID int64) bool {
 	return !ok
 }
 
-func (dt *MockDataTree) PruneTwigs(startID, endID int64) {
+func (dt *MockDataTree) PruneTwigs(startID, endID int64) []byte {
+	return nil
 }
 
 func (dt *MockDataTree) GetFileSizes() (int64, int64) {
 	return 0, 0
 }
 
-func (dt *MockDataTree) EndBlock() ([]byte, []byte) {
-	return nil, nil
+func (dt *MockDataTree) EndBlock() []byte {
+	return nil
 }
 
 func (dt *MockDataTree) Close() {

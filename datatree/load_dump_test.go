@@ -24,7 +24,7 @@ func compareTwigs(t *testing.T, twigMapA, twigMapB map[int64]*Twig) {
 		assert.Equal(t, twigA.activeBitsMTL1, twigB.activeBitsMTL1)
 		assert.Equal(t, twigA.activeBitsMTL2, twigB.activeBitsMTL2)
 		assert.Equal(t, twigA.activeBitsMTL3, twigB.activeBitsMTL3)
-		assert.Equal(t, twigA.leafMTRoot, twigB.leafMTRoot)
+		assert.Equal(t, twigA.leftRoot, twigB.leftRoot)
 		assert.Equal(t, twigA.twigRoot, twigB.twigRoot)
 		assert.Equal(t, twigA.FirstEntryPos, twigB.FirstEntryPos)
 	}
@@ -50,7 +50,7 @@ func TestLoadTree(t *testing.T) {
 	assert.Equal(t, tree1.mtree4YoungestTwig, mtree4YoungestTwig0)
 	tree1.Close()
 
-	tree2 := RecoverTree(defaultFileSize, dirName, nil, 0, 1)
+	tree2 := RecoverTree(defaultFileSize, dirName, nil, 0, 0, 1)
 	fmt.Printf("Recover finished\n")
 	assert.Equal(t, tree2.mtree4YoungestTwig, mtree4YoungestTwig0)
 	compareTwigs(t, tree2.activeTwigs, activeTwigs0)

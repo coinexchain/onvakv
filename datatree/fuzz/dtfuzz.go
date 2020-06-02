@@ -13,6 +13,9 @@ const (
 	PruneRatio = 0.5
 )
 
+// go test -c . -coverpkg=github.com/coinexchain/onvakv/datatree
+// RANDFILE=~/Downloads/goland-2019.1.3.dmg RANDCOUNT=$((120*10000)) ./fuzz.test -test.coverprofile system.out 
+
 func runTest() {
 	randFilename := os.Getenv("RANDFILE")
 	roundCount, err := strconv.Atoi(os.Getenv("RANDCOUNT"))
@@ -46,6 +49,7 @@ type FuzzConfig struct {
 	MaxActiveCount          uint32 // the maximum count of active entries
 	MagicBytesInKey         uint32 // chance that keys have magicbytes
 	MagicBytesInValue       uint32 // chance that value have magicbytes
+	PruneToOldestMaxDist    uint32 // the maximum possible value of oldestActiveTwigID-lastPrunedTwigID
 }
 
 var DefaultConfig = FuzzConfig{
@@ -62,6 +66,7 @@ var DefaultConfig = FuzzConfig{
 	MaxActiveCount:         1*1024*1024,
 	MagicBytesInKey:        1000,
 	MagicBytesInValue:      2000,
+	PruneToOldestMaxDist:   15,
 }
 
 type Context struct {
@@ -70,12 +75,12 @@ type Context struct {
 	cfg       FuzzConfig
 	edgeNodes []*datatree.EdgeNode
 
-	oldestTwigID     int64
-	serialNum        int64
-	lastPrunedTwigID int64
-	activeCount      int64
-	height           int64
-	stepCount        int64
+	oldestActiveTwigID int64
+	serialNum          int64
+	lastPrunedTwigID   int64
+	activeCount        int64
+	height             int64
+	stepCount          int64
 }
 
 const (
@@ -93,13 +98,22 @@ func NewContext(cfg FuzzConfig, rs randsrc.RandSrc) *Context {
 	}
 }
 
-func (ctx *Context) oldestSN() int64 {
-	return ctx.oldestTwigID * datatree.LeafCountInTwig
+func (ctx *Context) oldestActiveSN() int64 {
+	return ctx.oldestActiveTwigID * datatree.LeafCountInTwig
 }
 
 func (ctx *Context) generateRandSN() int64 {
-	oldestSN := ctx.oldestSN()
-	return oldestSN + int64(ctx.rs.GetUint64()%uint64(ctx.serialNum - oldestSN))
+	oldest := ctx.oldestActiveSN()
+	return oldest + int64(ctx.rs.GetUint64()%uint64(ctx.serialNum - oldest))
+}
+
+func (ctx *Context) oldestInactiveSN() int64 {
+	return (ctx.lastPrunedTwigID + 1) * datatree.LeafCountInTwig
+}
+
+func (ctx *Context) generateRandSN4Proof() int64 {
+	oldest := ctx.oldestInactiveSN()
+	return oldest + int64(ctx.rs.GetUint64()%uint64(ctx.serialNum - oldest))
 }
 
 func (ctx *Context) generateRandEntry() *datatree.Entry {
@@ -171,9 +185,14 @@ func (ctx *Context) step() {
 func (ctx *Context) endBlock() {
 	ctx.height++
 	//fmt.Printf("Now EndBlock %d\n", ctx.stepCount)
-	_, bz := ctx.tree.EndBlock()
+	ctx.tree.EndBlock()
 	for i := 0; i < int(ctx.cfg.ProofCount); i++ {
-		sn := ctx.generateRandSN()
+		sn := ctx.oldestInactiveSN()
+		if i > 0 {
+			sn = ctx.generateRandSN4Proof()
+		}
+		//fmt.Printf("oldestInactiveSN %d lastPrunedTwigID %d oldestActiveTwigID %d serialNum %d sn %d\n",
+		//	ctx.oldestInactiveSN(), ctx.lastPrunedTwigID, ctx.oldestActiveTwigID, ctx.serialNum, sn)
 		path := ctx.tree.GetProof(sn)
 		err := path.Check(false)
 		if err != nil {
@@ -189,10 +208,6 @@ func (ctx *Context) endBlock() {
 			panic(err)
 		}
 	}
-	if len(bz) != 0 {
-		ctx.edgeNodes = datatree.BytesToEdgeNodes(bz)
-		//fmt.Printf("endBlock edgeNodes %#v\n", ctx.edgeNodes)
-	}
 	if ctx.height % int64(ctx.cfg.ConsistencyEveryNBlock) == 0 {
 		fmt.Printf("Now CheckHashConsistency\n")
 		datatree.CheckHashConsistency(ctx.tree)
@@ -203,6 +218,8 @@ func (ctx *Context) endBlock() {
 	}
 	if (ctx.height % int64(ctx.cfg.RecoverEveryNBlock) == 0) && (ctx.stepCount > 0*1320*10000) {
 		fmt.Printf("Now recoverTree stepCount=%d\n", ctx.stepCount)
+		fmt.Printf("recoverTree edgeNodes %#v\n", ctx.edgeNodes)
+		//if len(ctx.edgeNodes) != 0 {ctx.recoverTree()}
 		ctx.recoverTree()
 	}
 	if ctx.height % int64(ctx.cfg.PruneEveryNBlock) == 0 {
@@ -223,9 +240,8 @@ func (ctx *Context) reloadTree() {
 
 func (ctx *Context) recoverTree() {
 	ctx.tree.Sync()
-	fmt.Printf("recoverTree edgeNodes %#v\n", ctx.edgeNodes)
 	tree1 := datatree.RecoverTree(defaultFileSize, dirName,
-		ctx.edgeNodes, ctx.oldestTwigID, ctx.serialNum >> datatree.TwigShift)
+		ctx.edgeNodes, ctx.lastPrunedTwigID, ctx.oldestActiveTwigID, ctx.serialNum >> datatree.TwigShift)
 
 	datatree.CompareTreeTwigs(ctx.tree, tree1)
 	datatree.CheckHashConsistency(tree1)
@@ -233,10 +249,14 @@ func (ctx *Context) recoverTree() {
 	ctx.tree = tree1
 }
 
+func (ctx *Context) getRatio() float64 {
+	return float64(ctx.activeCount) / float64(ctx.serialNum - ctx.oldestActiveSN())
+}
+
 func (ctx *Context) pruneTree() {
-	fmt.Printf("Try pruneTree %f %d %d\n", float64(ctx.activeCount) / float64(ctx.serialNum - ctx.oldestSN()), ctx.activeCount, ctx.serialNum - ctx.oldestSN())
-	for float64(ctx.activeCount) / float64(ctx.serialNum - ctx.oldestSN()) < PruneRatio {
-		entries := ctx.tree.GetActiveEntriesInTwig(ctx.oldestTwigID)
+	fmt.Printf("Try pruneTree %f %d %d\n", ctx.getRatio(), ctx.activeCount, ctx.serialNum - ctx.oldestActiveSN())
+	for ctx.getRatio() < PruneRatio {
+		entries := ctx.tree.GetActiveEntriesInTwig(ctx.oldestActiveTwigID)
 		for _, entry := range entries {
 			sn := entry.SerialNum
 			if sn < 0 || sn > (1<<31) {
@@ -249,20 +269,18 @@ func (ctx *Context) pruneTree() {
 				ctx.tree.AppendEntry(entry)
 			}
 		}
-		ctx.tree.EvictTwig(ctx.oldestTwigID)
-		ctx.oldestTwigID++
+		ctx.tree.EvictTwig(ctx.oldestActiveTwigID)
+		ctx.oldestActiveTwigID++
 	}
-	fmt.Printf("Now oldestTwigID %d serialNum %d\n", ctx.oldestTwigID, ctx.serialNum)
-	_, bz := ctx.tree.EndBlock()
-	if len(bz) != 0 {
-		ctx.edgeNodes = datatree.BytesToEdgeNodes(bz)
-		//fmt.Printf("endBlock edgeNodes %#v\n", ctx.edgeNodes)
-	}
-	endID := ctx.oldestTwigID - 1
-	ratio := float64(ctx.activeCount) / float64(ctx.serialNum - ctx.oldestSN())
-	fmt.Printf("Now pruneTree(%f) %d %d\n", ratio, ctx.lastPrunedTwigID, endID)
+	ctx.tree.EndBlock()
+	fmt.Printf("Now oldestActiveTwigID %d serialNum %d\n", ctx.oldestActiveTwigID, ctx.serialNum)
+	endID := ctx.oldestActiveTwigID - 1 - int64(ctx.rs.GetUint32()%ctx.cfg.PruneToOldestMaxDist)
+	fmt.Printf("Now pruneTree(%f) %d %d\n", ctx.getRatio(), ctx.lastPrunedTwigID, endID)
 	if endID - ctx.lastPrunedTwigID >= datatree.MinPruneCount {
-		ctx.tree.PruneTwigs(ctx.lastPrunedTwigID, endID)
+		fmt.Printf("Now run PruneTwigs %d %d oldestActiveTwigID %d\n", ctx.lastPrunedTwigID, endID, ctx.oldestActiveTwigID)
+		bz := ctx.tree.PruneTwigs(ctx.lastPrunedTwigID, endID)
+		ctx.edgeNodes = datatree.BytesToEdgeNodes(bz)
+		fmt.Printf("Here the edgeNodes %v\n", ctx.edgeNodes)
 		ctx.lastPrunedTwigID = endID
 	}
 }
