@@ -17,7 +17,7 @@ const (
 	OpInsertOrChange
 )
 
-type EntryX struct {
+type HotEntry struct {
 	EntryPtr   *Entry
 	Operation  OperationOnEntry
 	IsModified bool

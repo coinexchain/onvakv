@@ -28,12 +28,12 @@ type OnvaKV struct {
 	datTree       types.DataTree
 	rocksdb       *indextree.RocksDB
 	rootHash      []byte
-	k2eCache      *sync.Map
-	cachedEntries []*EntryX
+	k2heMap       *sync.Map // key-to-hot-entry map
+	cachedEntries []*HotEntry
 }
 
 func NewOnvaKV4Mock() *OnvaKV {
-	okv := &OnvaKV{k2eCache: &sync.Map{}}
+	okv := &OnvaKV{k2heMap: &sync.Map{}}
 
 	okv.datTree = datatree.NewMockDataTree()
 	okv.idxTree = indextree.NewMockIndexTree()
@@ -53,8 +53,8 @@ func NewOnvaKV(dirName string, queryHistory bool) (*OnvaKV, error) {
 	_, err := os.Stat(dirName)
 	dirNotExists := os.IsNotExist(err)
 	okv := &OnvaKV{
-		k2eCache:      &sync.Map{},
-		cachedEntries: make([]*EntryX, 0, 2000),
+		k2heMap:      &sync.Map{},
+		cachedEntries: make([]*HotEntry, 0, 2000),
 	}
 	if dirNotExists {
 		os.Mkdir(dirName, 0700)
@@ -109,11 +109,11 @@ func (okv *OnvaKV) Close() {
 	okv.rocksdb = nil
 	okv.datTree = nil
 	okv.meta = nil
-	okv.k2eCache = nil
+	okv.k2heMap = nil
 }
 
 type Entry = types.Entry
-type EntryX = types.EntryX
+type HotEntry = types.HotEntry
 
 func (okv *OnvaKV) GetRootHash() []byte {
 	return append([]byte{}, okv.rootHash...)
@@ -133,10 +133,10 @@ func (okv *OnvaKV) PrepareForUpdate(k []byte) {
 	if findIt { // The case of Change
 		//fmt.Printf("In PrepareForUpdate we update\n")
 		entry := okv.datTree.ReadEntry(int64(pos))
-		v, ok  := okv.k2eCache.Load(string(k))
+		v, ok  := okv.k2heMap.Load(string(k))
 		if !ok || v == nil {
 			//fmt.Printf("Now we add entry to k2e(findIt): %s(%#v)\n", string(k), k)
-			okv.k2eCache.Store(string(k), &EntryX{
+			okv.k2heMap.Store(string(k), &HotEntry{
 				EntryPtr:  entry,
 				Operation: types.OpNone,
 			})
@@ -146,7 +146,7 @@ func (okv *OnvaKV) PrepareForUpdate(k []byte) {
 
 	// The case of Insert
 	//fmt.Printf("Now we add entry to k2e(not-findIt): %s(%#v)\n", string(k), k)
-	okv.k2eCache.Store(string(k), &EntryX{
+	okv.k2heMap.Store(string(k), &HotEntry{
 		EntryPtr: &Entry{
 			Key:        k,
 			Value:      nil,
@@ -162,22 +162,22 @@ func (okv *OnvaKV) PrepareForUpdate(k []byte) {
 	prevEntry := okv.getPrevEntry(k)
 	//fmt.Printf("prevEntry(%#v): %#v\n", k, prevEntry)
 	kStr := string(prevEntry.Key)
-	v, ok  := okv.k2eCache.Load(kStr)
+	v, ok  := okv.k2heMap.Load(kStr)
 	if !ok || v == nil {
 		//fmt.Printf("Now we add entry to k2e(prevEntry.Key): %s(%#v)\n", kStr, prevEntry.Key)
-		okv.k2eCache.Store(kStr, &EntryX{
+		okv.k2heMap.Store(kStr, &HotEntry{
 			EntryPtr:  prevEntry,
 			Operation: types.OpNone,
 		})
 	}
 
 	kStr = string(prevEntry.NextKey)
-	_, ok = okv.k2eCache.Load(kStr)
+	_, ok = okv.k2heMap.Load(kStr)
 	if !ok {
 		//fmt.Printf("Now we add entry to k2e(prevEntry.NextKey): %s(%#v)\n", kStr, prevEntry.NextKey)
-		okv.k2eCache.Store(kStr, nil) // we do not need next entry's value, so here we store nil
+		okv.k2heMap.Store(kStr, nil) // we do not need next entry's value, so here we store nil
 	} else {
-		//fmt.Printf("Now we hit k2eCache: %s(%#v)\n", kStr, prevEntry.NextKey)
+		//fmt.Printf("Now we hit k2heMap: %s(%#v)\n", kStr, prevEntry.NextKey)
 	}
 }
 
@@ -190,9 +190,9 @@ func (okv *OnvaKV) PrepareForDeletion(k []byte) (findIt bool) {
 
 	entry := okv.datTree.ReadEntry(int64(pos))
 	kStr := string(entry.Key)
-	v, ok := okv.k2eCache.Load(kStr)
+	v, ok := okv.k2heMap.Load(kStr)
 	if !ok || v == nil {
-		okv.k2eCache.Store(kStr, &EntryX{
+		okv.k2heMap.Store(kStr, &HotEntry{
 			EntryPtr:  entry,
 			Operation: types.OpNone,
 		})
@@ -200,24 +200,24 @@ func (okv *OnvaKV) PrepareForDeletion(k []byte) (findIt bool) {
 
 	prevEntry := okv.getPrevEntry(k)
 	kStr = string(prevEntry.Key)
-	v, ok = okv.k2eCache.Load(kStr)
+	v, ok = okv.k2heMap.Load(kStr)
 	if !ok || v == nil {
-		okv.k2eCache.Store(kStr, &EntryX{
+		okv.k2heMap.Store(kStr, &HotEntry{
 			EntryPtr:  prevEntry,
 			Operation: types.OpNone,
 		})
 	}
 
 	kStr = string(entry.NextKey)
-	_, ok = okv.k2eCache.Load(kStr)
+	_, ok = okv.k2heMap.Load(kStr)
 	if !ok {
-		okv.k2eCache.Store(kStr, nil) // we do not need next entry's value, so here we store nil
+		okv.k2heMap.Store(kStr, nil) // we do not need next entry's value, so here we store nil
 	}
 	return
 }
 
-func makeFakeEntryX(key string) *EntryX {
-	return &EntryX {
+func makeFakeHotEntry(key string) *HotEntry {
+	return &HotEntry {
 		EntryPtr: &Entry{
 			Key:        []byte(key),
 			Value:      nil,
@@ -258,32 +258,32 @@ func (okv *OnvaKV) BeginWrite(height int64) {
 
 func (okv *OnvaKV) Set(key, value []byte) {
 	//fmt.Printf("In Set we see: %s %s\n", string(key), string(value))
-	v, ok := okv.k2eCache.Load(string(key))
+	v, ok := okv.k2heMap.Load(string(key))
 	if !ok {
 		panic("Can not find entry in cache")
 	}
 	if v == nil {
 		panic("Can not change or insert at a fake entry")
 	}
-	entry := v.(*EntryX)
+	entry := v.(*HotEntry)
 	entry.EntryPtr.Value = value
 	entry.Operation = types.OpInsertOrChange
 }
 
 func (okv *OnvaKV) Delete(key []byte) {
 	//fmt.Printf("In Delete we see: %s(%#v)\n", string(key), key)
-	v, ok := okv.k2eCache.Load(string(key))
+	v, ok := okv.k2heMap.Load(string(key))
 	if !ok {
 		panic("Can not find entry in cache")
 	}
 	if v == nil {
 		panic("Can not delete a fake entry")
 	}
-	entry := v.(*EntryX)
+	entry := v.(*HotEntry)
 	entry.Operation = types.OpDelete
 }
 
-func getPrev(cachedEntries []*EntryX, i int) int {
+func getPrev(cachedEntries []*HotEntry, i int) int {
 	var j int
 	for j = i-1; j >= 0; j-- {
 		if cachedEntries[j].Operation != types.OpDelete {
@@ -296,7 +296,7 @@ func getPrev(cachedEntries []*EntryX, i int) int {
 	return j
 }
 
-func getNext(cachedEntries []*EntryX, i int) int {
+func getNext(cachedEntries []*HotEntry, i int) int {
 	var j int
 	for j = i+1; j < len(cachedEntries); j++ {
 		if cachedEntries[j].Operation != types.OpDelete {
@@ -310,12 +310,12 @@ func getNext(cachedEntries []*EntryX, i int) int {
 }
 
 func (okv *OnvaKV) update() {
-	okv.k2eCache.Range(func(key, value interface{}) bool {
+	okv.k2heMap.Range(func(key, value interface{}) bool {
 		if value == nil {
 			keyStr := key.(string)
-		        okv.cachedEntries = append(okv.cachedEntries, makeFakeEntryX(keyStr))
+		        okv.cachedEntries = append(okv.cachedEntries, makeFakeHotEntry(keyStr))
 		} else {
-			entryX := value.(*EntryX)
+			entryX := value.(*HotEntry)
 		        okv.cachedEntries = append(okv.cachedEntries, entryX)
 		}
 		return true
@@ -401,7 +401,7 @@ func (okv *OnvaKV) EndWrite() {
 	}
 	root := okv.datTree.EndBlock()
 	okv.rootHash = root
-	okv.k2eCache = &sync.Map{} // clear content
+	okv.k2heMap = &sync.Map{} // clear content
 	okv.cachedEntries = okv.cachedEntries[:0] // clear content
 
 	eS, tS := okv.datTree.GetFileSizes()
