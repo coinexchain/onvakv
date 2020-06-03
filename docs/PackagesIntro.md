@@ -225,19 +225,28 @@ The RocksDB's content is also used to initialize the B-Tree when starting up. Wh
 
 If we no longer need the KV-pairs whose expiring height are old enough, they can be filtered out during compaction: this is how pruning works.
 
-
-
 #### Top of OnvaKV
 
 See onvakv.go
 
 It integrates the three major parts and implement the basic read/update/insert/delete operations. The most important job of it is to keep these parts synchronized. It uses a two-phase protocol: during the execution of transactions, it perform parrallel prepareations to load "hot entries" in DRAM; when a block is committed, it updates these parts in a batch way.
 
+During a block's execution, we say an entry is "hot" when:
 
+1. It may be a newly-inserted entry
+2. Its Value may be updated
+3. Its NextKey may be changed because a new entry will be inserted next to it.
+4. Its NextKey may be changed because the entry next to it may be deleted
+
+We use the word "may" here because in individual transaction in a block may succeed or fail during execution. If it succeed, the KV updates made by it will take effect. If it fail, the KV updates will be discarded.
+
+To support parallel execution of transactions, we use a `sync.Map` to cache the hot entries. This cache is valid only during a block's execution. When a block commits, it is cleared.
+
+During a block, this cache undergoes a filling phase,  a marking phase and a sweeping phase. In the filling phase, many transactions can concurrently add new hot entries to this cache, using the `PrepareForUpdate` and `PrepareForDeletion` functions. In the marking phase, only the succeeded transactions marking some of these hot entries to be inserted, changed or deleted, using the `Set` and `Delete` functions. In the sweeping phase, the cached hot entries are sorted according to their keys and then we scan these sorted hot entries to update datatree.
 
 ### Store Data Structures
 
-The API of OnvaKV is somehow hard to use. It must be wrapped by some "store" data structures to provide an easy-to-used KV-style API. The figure below shows the relationship among these "store" data structures.
+The API of OnvaKV is somehow hard to use because you must follow the three phases of the hot entry cache. It would be better to wrap it with some "store" data structures to provide an easy-to-used KV-style API. The figure below shows the relationship among these "store" data structures.
 
 ```
   PrefixedStore
@@ -255,17 +264,78 @@ The API of OnvaKV is somehow hard to use. It must be wrapped by some "store" dat
    OnvaKV
 ```
 
-These data structures will be introduced as follows.
+There are three levels of caching with different lifetimes: RootStore's cache lasts for many blocks, TrunkStore's cache only exists during a block and MultiStore's cache only exists during a transaction.
 
-CacheStore (store/cache.go) It use golang version of B-tree to implement an in-memory cache for overlay. It is better than Cosmos-SDK's implementation of map and on-the-fly sorting.
+During run time, the relationship of these stores are shown as below.
 
-RootStore (store/root.go) It survives many blocks to provide persistent cache for frequently-reused data.
+![OnvaKV_8](./images/OnvaKV_8.png)
 
-TrunkStore (store/trunk.go) It is for one block's execution, with the cache overlay.
+Each transaction has its own MultiStore, based on which there are several PrefixedStore. Each transaction's MultiStore can access the block's TrunkStore. When block is committed, contents in TruckStore are flushed to RootStore.
 
-MultiStore (store/multi.go) It is for one transaction's execution, with the cache overlay.
+The transactions in a block are divided into several epochs. Inside an epoch, transactions are independent, and among epochs, they are dependent. So we execute all the transactions of one epoch in parallel, and then switch to the next epoch when finished. This algorithm's detail is show below:
 
-PrefixedStore (store/prefix.go) It is used by a "keeper", implemented by prefixing a MultiStore.
+1. Allocate a new TrunkStore for a new block
+2. Fetch an epoch of transactions from the block
+3. Execute these transactions in parallel, which read and write their own MultiStore, and at the same time, read the shared TruckStore and RootStore
+4. For the succeeded transactions, flush their caches to TrunkStore, and for the failed ones, discard their caches.
+5. Repeat step 2 to 4 until there are no more epochs
+6. Flush the TrunkStore's cache to root cache
+
+#### Lazy Serialization
+
+The values stored in the caches are serializable objects, instead of plain byteslices.
+
+```go
+type Serializable interface {
+	ToBytes() []byte
+	FromBytes([]byte)
+	DeepCopy() interface{}
+}
+```
+
+Serializable objects allow "lazy serialization". These objects undergo serialization/deserialization only when they are read out from and written to the entry file. When being transferred among these caches and the application's logic, they are just plain pointers.
+
+The stores all support serializable objects. They are so-called "Key-Object stores", instead of plain "Key-Value stores". They support following `Get*` functions:
+
+- Get: return the serialized byteslices of the object
+- GetObjCopy: return a deep copy of the object
+- GetReadOnlyObj: return the object itself, but the transaction should not modify the object
+
+The MultiStore and PrefixedStore only serves one transaction, so they can support one more function:
+
+- GetObj: return the object itself, and record that this object's ownership is transferred out. The client code can not use GetObj twice at the same key, and the code must use SetObj to return back the ownership later.
+
+#### CacheStore
+
+See store/cache.go.
+
+It use golang version of B-tree to implement an in-memory cache for overlay.
+
+#### RootStore
+
+See store/root.go.
+
+It survives many blocks to provide persistent cache for frequently-reused data.
+
+#### TrunkStore
+
+See store/truck.go.
+
+It is for one block's execution, with a cache overlay.
+
+#### MultiStore
+
+See store/multi.go.
+
+It is for one transaction's execution, with the cache overlay.
+
+#### PrefixedStore
+
+See store/prefix.go.
+
+It is used by a "keeper", implemented by prefixing a MultiStore.
+
+
 
 
 
