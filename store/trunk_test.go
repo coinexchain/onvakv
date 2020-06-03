@@ -98,8 +98,6 @@ func TestTrunk(t *testing.T) {
 		assert.Equal(t, []byte("00"), ts.Get([]byte("03210")))
 		assert.Equal(t, []byte("10"), ts.Get([]byte("03211")))
 		assert.Equal(t, []byte("20"), ts.Get([]byte("03212")))
-		ts.GetObj([]byte("03213"), &ptr)
-		assert.Equal(t, &Coord{x:3, y:1}, ptr)
 		ts.GetObjCopy([]byte("03213"), &ptr)
 		assert.Equal(t, &Coord{x:3, y:1}, ptr)
 		ts.GetReadOnlyObj([]byte("03213"), &ptr)
@@ -110,8 +108,6 @@ func TestTrunk(t *testing.T) {
 		assert.Equal(t, []byte("70"), ts.Get([]byte("03217")))
 		assert.Equal(t, []byte("80"), ts.Get([]byte("43218")))
 		assert.Equal(t, []byte("90"), ts.Get([]byte("43219")))
-		ts.GetObj([]byte("4321a"), &ptr)
-		assert.Equal(t, &Coord{x:1, y:3}, ptr)
 		ts.GetObjCopy([]byte("4321a"), &ptr)
 		assert.Equal(t, &Coord{x:1, y:3}, ptr)
 		assert.Equal(t, []byte{8,0,0,0,8,0,0,0}, ts.Get([]byte("4321b")))
@@ -174,8 +170,6 @@ func TestTrunk(t *testing.T) {
 		var ptr types.Serializable
 		ptr = &Coord{}
 		assert.Equal(t, []byte("00"), ts.Get([]byte("03210")))
-		ts.GetObj([]byte("03211"), &ptr)
-		assert.Nil(t, ptr)
 		ts.GetObjCopy([]byte("03212"), &ptr)
 		assert.Nil(t, ptr)
 		assert.Equal(t, false, ts.Has([]byte("03212")))
@@ -225,14 +219,4 @@ func TestTrunk(t *testing.T) {
 	okv.Close()
 	os.RemoveAll("./rocksdb.db")
 }
-
-//func (ts *TrunkStore) Has(key []byte) bool {
-//func (ts *TrunkStore) Get(key []byte) []byte {
-//func (ts *TrunkStore) GetObjCopy(key []byte, ptr *types.Serializable) {
-//func (ts *TrunkStore) GetObj(key []byte, ptr *types.Serializable) {
-//func (ts *TrunkStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
-//func (ts *TrunkStore) Iterator(start, end []byte) types.ObjIterator {
-//func (ts *TrunkStore) ReverseIterator(start, end []byte) types.ObjIterator {
-//func (ts *TrunkStore) Close(writeBack bool) {
-
 

@@ -12,22 +12,22 @@ import (
 const CacheSizeLimit = 1024 * 1024
 
 type RootStore struct {
-	cache       map[string]types.Serializable
-	cacheableFn func(k []byte) bool
-	okv         *onvakv.OnvaKV
-	height      int64
-	storeKeys   map[types.StoreKey]struct{}
+	cache          map[string]types.Serializable
+	isCacheableKey func(k []byte) bool
+	okv            *onvakv.OnvaKV
+	height         int64
+	storeKeys      map[types.StoreKey]struct{}
 }
 
 var _ types.RootStoreI = &RootStore{}
 
-func NewRootStore(okv *onvakv.OnvaKV, storeKeys map[types.StoreKey]struct{}, cacheableFn func(k []byte) bool) *RootStore {
+func NewRootStore(okv *onvakv.OnvaKV, storeKeys map[types.StoreKey]struct{}, isCacheableKey func(k []byte) bool) *RootStore {
 	return &RootStore{
-		cache:       make(map[string]types.Serializable),
-		cacheableFn: cacheableFn,
-		okv:         okv,
-		height:      -1,
-		storeKeys:   storeKeys,
+		cache:          make(map[string]types.Serializable),
+		isCacheableKey: isCacheableKey,
+		okv:            okv,
+		height:         -1,
+		storeKeys:      storeKeys,
 	}
 }
 
@@ -35,33 +35,41 @@ func (root *RootStore) SetHeight(h int64) {
 	root.height = h
 }
 
-func (root *RootStore) Get(key []byte) []byte {
+func (root *RootStore) Get(key []byte) []byte { //TODO should check root.cache
 	e := root.okv.GetEntry(key)
 	if e == nil {
 		return nil
 	}
 	return e.Value
 }
-func (root *RootStore) GetObjCopy(key []byte, ptr *types.Serializable) {
-	root.GetObj(key, ptr)
-}
-func (root *RootStore) GetObj(key []byte, ptr *types.Serializable) {
+func (root *RootStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
 	ok := false
 	var obj types.Serializable
-	if root.cacheableFn(key) {
+	if root.isCacheableKey(key) {
 		obj, ok = root.cache[string(key)]
 	}
 	if ok {
 		reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(obj))
-		root.cache[string(key)] = obj.DeepCopy().(types.Serializable)
 	} else if bz := root.Get(key); bz != nil {
 		(*ptr).FromBytes(bz)
 	} else {
 		*ptr = nil
 	}
 }
-func (root *RootStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
-	root.GetObj(key, ptr)
+func (root *RootStore) GetObjCopy(key []byte, ptr *types.Serializable) {
+	ok := false
+	var obj types.Serializable
+	if root.isCacheableKey(key) {
+		obj, ok = root.cache[string(key)]
+	}
+	if ok {
+		newObj := obj.DeepCopy().(types.Serializable)
+		reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(newObj))
+	} else if bz := root.Get(key); bz != nil {
+		(*ptr).FromBytes(bz)
+	} else {
+		*ptr = nil
+	}
 }
 
 func (root *RootStore) Has(key []byte) bool {
@@ -109,7 +117,7 @@ func (root *RootStore) EndWrite() {
 }
 
 func (root *RootStore) addToCache(key []byte, obj types.Serializable) {
-	if !root.cacheableFn(key) {
+	if !root.isCacheableKey(key) {
 		return
 	}
 	if len(root.cache) > CacheSizeLimit {
@@ -158,7 +166,7 @@ func (iter *RootStoreIterator) ObjValue(ptr *types.Serializable) {
 	key := iter.iter.Key()
 	ok := false
 	var obj types.Serializable
-	if iter.root.cacheableFn(key) {
+	if iter.root.isCacheableKey(key) {
 		obj, ok = iter.root.cache[string(key)]
 	}
 	if ok {

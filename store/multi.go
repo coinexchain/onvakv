@@ -7,7 +7,7 @@ import (
 // We use a new TrunkStore for transaction
 type MultiStore struct {
 	cache     *CacheStore
-	parent    *TrunkStore
+	trunk     *TrunkStore
 	storeKeys map[types.StoreKey]struct{}
 }
 
@@ -30,7 +30,7 @@ func (ms *MultiStore) Has(key []byte) bool {
 	case types.Hit:
 		return true
 	case types.Missed:
-		return ms.parent.Has(key)
+		return ms.trunk.Has(key)
 	default:
 		panic("Invalid Status")
 	}
@@ -44,7 +44,7 @@ func (ms *MultiStore) Get(key []byte) []byte {
 	case types.Hit:
 		return res
 	case types.Missed:
-		return ms.parent.Get(key)
+		return ms.trunk.Get(key)
 	default:
 		panic("Invalid Status")
 	}
@@ -56,7 +56,7 @@ func (ms *MultiStore) GetObj(key []byte, ptr *types.Serializable) {
 	case types.JustDeleted:
 		*ptr = nil
 	case types.Missed:
-		ms.parent.GetObjCopy(key, ptr)
+		ms.trunk.GetObjCopy(key, ptr)
 	}
 }
 
@@ -66,23 +66,23 @@ func (ms *MultiStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
 	case types.JustDeleted:
 		*ptr = nil
 	case types.Missed:
-		ms.parent.GetReadOnlyObj(key, ptr)
+		ms.trunk.GetReadOnlyObj(key, ptr)
 	}
 }
 
 func (ms *MultiStore) Set(key, value []byte) {
 	ms.cache.Set(key, value)
-	ms.parent.PrepareForUpdate(key)
+	ms.trunk.PrepareForUpdate(key)
 }
 
 func (ms *MultiStore) SetObj(key []byte, obj types.Serializable) {
 	ms.cache.SetObj(key, obj)
-	ms.parent.PrepareForUpdate(key)
+	ms.trunk.PrepareForUpdate(key)
 }
 
 func (ms *MultiStore) Delete(key []byte) {
 	ms.cache.Delete(key)
-	ms.parent.PrepareForDeletion(key)
+	ms.trunk.PrepareForDeletion(key)
 }
 
 func (ms *MultiStore) Close(writeBack bool) {
@@ -90,12 +90,12 @@ func (ms *MultiStore) Close(writeBack bool) {
 		ms.writeBack()
 	}
 	ms.cache = nil
-	ms.parent = nil
+	ms.trunk = nil
 	ms.storeKeys = nil
 }
 
 func (ms *MultiStore) writeBack() {
-	ms.parent.Update(func(cache *CacheStore) {
+	ms.trunk.Update(func(cache *CacheStore) {
 		ms.cache.ScanAllEntries(func(key []byte, obj interface{}, isDeleted bool) {
 			if isDeleted {
 				cache.Delete(key)
@@ -111,9 +111,9 @@ func (ms *MultiStore) writeBack() {
 }
 
 func (ms *MultiStore) Iterator(start, end []byte) types.ObjIterator {
-	return newCacheMergeIterator(ms.parent.Iterator(start, end), ms.cache.Iterator(start, end), true)
+	return newCacheMergeIterator(ms.trunk.Iterator(start, end), ms.cache.Iterator(start, end), true)
 }
 
 func (ms *MultiStore) ReverseIterator(start, end []byte) types.ObjIterator {
-	return newCacheMergeIterator(ms.parent.ReverseIterator(start, end), ms.cache.ReverseIterator(start, end), false)
+	return newCacheMergeIterator(ms.trunk.ReverseIterator(start, end), ms.cache.ReverseIterator(start, end), false)
 }

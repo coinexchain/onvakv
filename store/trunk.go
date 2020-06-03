@@ -17,7 +17,7 @@ type TrunkStore struct {
 func (ts *TrunkStore) Cached() *MultiStore {
 	return &MultiStore{
 		cache:     NewCacheStore(),
-		parent:    ts,
+		trunk:     ts,
 		storeKeys: ts.storeKeys,
 	}
 }
@@ -66,19 +66,6 @@ func (ts *TrunkStore) GetObjCopy(key []byte, ptr *types.Serializable) {
 		*ptr = nil
 	case types.Missed:
 		ts.root.GetObjCopy(key, ptr)
-	}
-}
-
-func (ts *TrunkStore) GetObj(key []byte, ptr *types.Serializable) {
-	if atomic.LoadInt64(&ts.isWriting) != 0 {
-		panic("Is Writing")
-	}
-	status := ts.cache.GetObj(key, ptr)
-	switch status {
-	case types.JustDeleted:
-		*ptr = nil
-	case types.Missed:
-		ts.root.GetObj(key, ptr)
 	}
 }
 

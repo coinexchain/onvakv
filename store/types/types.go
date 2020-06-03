@@ -64,7 +64,6 @@ type RootStoreI interface {
 	SetHeight(h int64)
 	Get(key []byte) []byte
 	GetObjCopy(key []byte, ptr *Serializable)
-	GetObj(key []byte, ptr *Serializable)
 	GetReadOnlyObj(key []byte, ptr *Serializable)
 	Has(key []byte) bool
 	PrepareForUpdate(key []byte)
