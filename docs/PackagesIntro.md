@@ -1,6 +1,6 @@
 ### Introduction to packages of OnvaKV
 
-Here we introduce the packages and the data structres defined in them.
+Here we introduce the packages and the data structres defined in the OnvaKV repo.
 
 ### OnvaKV
 
@@ -303,39 +303,45 @@ The stores all support serializable objects. They are so-called "Key-Object stor
 
 The MultiStore and PrefixedStore only serves one transaction, so they can support one more function:
 
-- GetObj: return the object itself, and record that this object's ownership is transferred out. The client code can not use GetObj twice at the same key, and the code must use SetObj to return back the ownership later.
+- GetObj: return the object itself, and record that this object's ownership is transferred out. The client code cannot use GetObj twice at the same key, and the code must use SetObj to return back the ownership later.
+
+RootStore and TrunkStore cannot support GetObj because the object's ownership will never be returned back if the transaction fail.
 
 #### CacheStore
 
 See store/cache.go.
 
-It use golang version of B-tree to implement an in-memory cache for overlay.
+It uses the Golang version of B-tree to implement an in-memory cache for overlay. It buffers all the changes to the underlying store, including value-updating, insertion and deletion. `ScanAllEntries` can iterate all these buffered changes. It is used to dump these changes to the underlying store.
+
+CacheStore shadows (overrides) the underlying store. If a key hits on the cache, then the cached status (existence and value) will take precedence over the underlying store.
+
+CacheStore's iterator does not skip deleted keys. Instead, it returns a nil key to signal it is pointing to an deleted item.
+
+A cacheMergeIterator merges a parent Iterator and a cache Iterator, and provides a clear interface to outside. If the cache iterator has the same key as the parent, the cache shadows (overrides) the parent. 
 
 #### RootStore
 
 See store/root.go.
 
-It survives many blocks to provide persistent cache for frequently-reused data.
+It survives many blocks to provide persistent cache for frequently-reused data. Its cache is just a plain golang map `map[string]Serializable`. Its cache is not used to add an overlay. Instead, it is more like a file system cache in memory to avoid reading entries from hard disk. It only caches readonly objects, such as parameters which can be configured by proposals. You can further control which readonly objects can be cached by providing `isCacheableKey func(k []byte) bool`, which returns true for keys whose value need to be cached.
 
 #### TrunkStore
 
 See store/truck.go.
 
-It is for one block's execution, with a cache overlay.
+It is for one block's execution, with a cache overlay. When a TrunkStore is closed, you can choose to write back its contents or not. Once the write-back process starts, it cannot be read or written any more.
 
 #### MultiStore
 
 See store/multi.go.
 
-It is for one transaction's execution, with the cache overlay.
+It is for one transaction's execution, with the cache overlay. It is named as "multi" because there are multiple MultiStores built upon a TrunkStore. When a MultiStore is closed, you can choose to write back its contents or not. Normally, the MultiStore is write back when a transaction succeeds.
 
 #### PrefixedStore
 
 See store/prefix.go.
 
-It is used by a "keeper", implemented by prefixing a MultiStore.
-
-
+It helps to divide a MultiStore into several "sub stores", each one of which has a unique key prefix. Every operation on PrefixedStore, will be performed on the underlying MultiStore, with the keys be prefixed. 
 
 
 

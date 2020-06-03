@@ -52,6 +52,7 @@ func (root *RootStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
 		reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(obj))
 	} else if bz := root.Get(key); bz != nil {
 		(*ptr).FromBytes(bz)
+		root.addToCache(key, *ptr)
 	} else {
 		*ptr = nil
 	}
