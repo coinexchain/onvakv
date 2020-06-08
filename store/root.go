@@ -130,7 +130,7 @@ func (root *RootStore) addToCache(key []byte, obj types.Serializable) {
 	root.cache[string(key)] = obj //.DeepCopy().(types.Serializable) // maybe we do not need deepcopy
 }
 
-func (root *RootStore) GetTrunkStore() *TrunkStore {
+func (root *RootStore) GetTrunkStore() interface{} {
 	return &TrunkStore{
 		cache:     NewCacheStore(),
 		root:      root,

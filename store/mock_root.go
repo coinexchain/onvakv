@@ -21,6 +21,14 @@ func NewMockRootStore() *MockRootStore {
 	}
 }
 
+func (rs *MockRootStore) GetTrunkStore() interface{} {
+	return &TrunkStore{
+		cache:     NewCacheStore(),
+		root:      rs,
+		isWriting: 0,
+	}
+}
+
 func (rs *MockRootStore) SetHeight(h int64) {
 }
 

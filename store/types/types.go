@@ -61,6 +61,7 @@ type KObjStore interface {
 }
 
 type RootStoreI interface {
+	GetTrunkStore() interface{}
 	SetHeight(h int64)
 	Get(key []byte) []byte
 	GetObjCopy(key []byte, ptr *Serializable)
