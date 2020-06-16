@@ -1,13 +1,15 @@
 package store
 
 import (
+	"sync"
+
 	"github.com/coinexchain/onvakv/store/types"
 )
 
 type MockRootStore struct {
 	cacheStore          *CacheStore
-	preparedForUpdate   map[string]struct{}
-	preparedForDeletion map[string]struct{}
+	preparedForUpdate   *sync.Map
+	preparedForDeletion *sync.Map
 	isWritting          bool
 }
 
@@ -16,8 +18,8 @@ var _ types.RootStoreI = &MockRootStore{}
 func NewMockRootStore() *MockRootStore {
 	return &MockRootStore {
 		cacheStore:          NewCacheStore(),
-		preparedForUpdate:   make(map[string]struct{}),
-		preparedForDeletion: make(map[string]struct{}),
+		preparedForUpdate:   &sync.Map{},
+		preparedForDeletion: &sync.Map{},
 	}
 }
 
@@ -64,12 +66,12 @@ func (rs *MockRootStore) Has(key []byte) bool {
 
 func (rs *MockRootStore) PrepareForUpdate(key []byte) {
 	if rs.isWritting {panic("isWritting")}
-	rs.preparedForUpdate[string(key)] = struct{}{}
+	rs.preparedForUpdate.Store(string(key), struct{}{})
 }
 
 func (rs *MockRootStore) PrepareForDeletion(key []byte) {
 	if rs.isWritting {panic("isWritting")}
-	rs.preparedForDeletion[string(key)] = struct{}{}
+	rs.preparedForDeletion.Store(string(key), struct{}{})
 }
 
 func (rs *MockRootStore) Iterator(start, end []byte) types.ObjIterator {
@@ -86,7 +88,7 @@ func (rs *MockRootStore) BeginWrite() {
 
 func (rs *MockRootStore) Set(key, value []byte) {
 	if !rs.isWritting {panic("notWritting")}
-	if _, ok := rs.preparedForUpdate[string(key)]; !ok {
+	if _, ok := rs.preparedForUpdate.Load(string(key)); !ok {
 		panic("not prepared")
 	}
 	rs.cacheStore.Set(key, value)
@@ -94,7 +96,7 @@ func (rs *MockRootStore) Set(key, value []byte) {
 
 func (rs *MockRootStore) SetObj(key []byte, obj types.Serializable) {
 	if !rs.isWritting {panic("notWritting")}
-	if _, ok := rs.preparedForUpdate[string(key)]; !ok {
+	if _, ok := rs.preparedForUpdate.Load(string(key)); !ok {
 		panic("not prepared")
 	}
 	rs.cacheStore.SetObj(key, obj)
@@ -102,13 +104,15 @@ func (rs *MockRootStore) SetObj(key []byte, obj types.Serializable) {
 
 func (rs *MockRootStore) Delete(key []byte) {
 	if !rs.isWritting {panic("notWritting")}
-	if _, ok := rs.preparedForDeletion[string(key)]; !ok {
+	if _, ok := rs.preparedForDeletion.Load(string(key)); !ok {
 		panic("not prepared")
 	}
-	rs.cacheStore.Delete(key)
+	rs.cacheStore.RealDelete(key)
 }
 
 func (rs *MockRootStore) EndWrite() {
 	rs.isWritting = false
+	rs.preparedForUpdate = &sync.Map{}
+	rs.preparedForDeletion = &sync.Map{}
 }
 
