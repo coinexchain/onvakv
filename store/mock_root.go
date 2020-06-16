@@ -45,17 +45,26 @@ func (rs *MockRootStore) Get(key []byte) []byte {
 
 func (rs *MockRootStore) GetObjCopy(key []byte, ptr *types.Serializable) {
 	if rs.isWritting {panic("isWritting")}
-	rs.cacheStore.GetObjCopy(key, ptr)
+	status := rs.cacheStore.GetObjCopy(key, ptr)
+	if status != types.Hit {
+		*ptr = nil
+	}
 }
 
 func (rs *MockRootStore) GetObj(key []byte, ptr *types.Serializable) {
 	if rs.isWritting {panic("isWritting")}
-	rs.cacheStore.GetObj(key, ptr)
+	status := rs.cacheStore.GetObj(key, ptr)
+	if status != types.Hit {
+		*ptr = nil
+	}
 }
 
 func (rs *MockRootStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
 	if rs.isWritting {panic("isWritting")}
-	rs.cacheStore.GetReadOnlyObj(key, ptr)
+	status := rs.cacheStore.GetReadOnlyObj(key, ptr)
+	if status != types.Hit {
+		*ptr = nil
+	}
 }
 
 func (rs *MockRootStore) Has(key []byte) bool {

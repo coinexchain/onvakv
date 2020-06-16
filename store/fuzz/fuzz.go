@@ -21,6 +21,31 @@ const (
 	OpDelete = 0
 )
 
+type Coord struct {
+	x, y uint32
+}
+func (coord *Coord) ToBytes() []byte {
+	var buf [8]byte
+	binary.LittleEndian.PutUint32(buf[:4], coord.x)
+	binary.LittleEndian.PutUint32(buf[4:], coord.y)
+	return buf[:]
+}
+
+func (coord *Coord) FromBytes(buf []byte) {
+	if len(buf) != 8 {
+		panic("length is not 8")
+	}
+	coord.x = binary.LittleEndian.Uint32(buf[:4])
+	coord.y = binary.LittleEndian.Uint32(buf[4:])
+}
+
+func (coord *Coord) DeepCopy() interface{} {
+	return &Coord{
+		x: coord.x,
+		y: coord.y,
+	}
+}
+
 var DBG bool
 
 var EndKey = []byte{255, 255, 255, 255, 255, 255, 255, 255, 255}
@@ -267,7 +292,7 @@ func GenerateRandEpoch(height, epochNum int, ref *RefStore, rs randsrc.RandSrc, 
 		tx := GenerateRandTx(ref, rs, cfg, touchedKeys, epoch.Succeed)
 		if DBG {
 			fmt.Printf("FinishGeneration h:%d epoch %d (%v) tx %d (%v) of %d\n", height, epochNum, epoch.Succeed, i, tx.Succeed, txCount)
-			for j, op := range epoch.TxList[i].OpList {
+			for j, op := range tx.OpList {
 				fmt.Printf("See operation %d of %d\n", j, len(tx.OpList))
 				fmt.Printf("%#v\n", op)
 			}
@@ -301,15 +326,76 @@ func GenerateRandBlock(height int, ref *RefStore, rs randsrc.RandSrc, cfg *FuzzC
 	return block
 }
 
-func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, cfg *FuzzConfig, epochSuc bool) {
+func MyGet(multi *store.MultiStore, rs randsrc.RandSrc, key []byte) []byte {
+	res := MyGetHelper(multi, rs, key)
+	if multi.Has(key) != (len(res) > 0) {
+		panic("Bug in Has")
+	}
+	return res
+}
+
+func MyGetHelper(multi *store.MultiStore, rs randsrc.RandSrc, key []byte) []byte {
+	var coord Coord
+	var ptr storetypes.Serializable
+	ptr = &coord
+
+	switch rs.GetUint32()%3 {
+	case 1:
+		return multi.Get(key)
+	case 2:
+		multi.GetReadOnlyObj(key, &ptr)
+		if ptr == nil {
+			return nil
+		}
+		return ptr.ToBytes()
+	default:
+		multi.GetObj(key, &ptr)
+		if ptr == nil {
+			return nil
+		}
+		res := ptr.ToBytes()
+		multi.SetObj(key, ptr)
+		return res
+	}
+}
+
+func MySet(multi *store.MultiStore, rs randsrc.RandSrc, key, value []byte) {
+	var coord Coord
+	var ptr storetypes.Serializable
+	ptr = &coord
+	if rs.GetUint32()%2 == 0 {
+		ptr.FromBytes(value)
+		multi.SetObj(key, ptr)
+	} else {
+		multi.Set(key, value)
+	}
+}
+
+func MyIterValue(rs randsrc.RandSrc, iter storetypes.ObjIterator) []byte {
+	var coord Coord
+	var ptr storetypes.Serializable
+	ptr = &coord
+	if rs.GetUint32()%2 == 0 {
+		iter.ObjValue(&ptr)
+		if ptr == nil {
+			return nil
+		}
+		return ptr.ToBytes()
+	} else {
+		return iter.Value()
+	}
+}
+
+func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, rs randsrc.RandSrc, cfg *FuzzConfig, epochSuc bool) {
 	for i, op := range tx.OpList {
 		if DBG {
 			fmt.Printf("Check %d-%d (%v) tx %d (%v) operation %d of %d\n", height, epochNum, epochSuc, txNum,  tx.Succeed, i, len(tx.OpList))
 			fmt.Printf("%#v\n", op)
 		}
 		if op.opType == OpRead {
-			if !bytes.Equal(op.value[:], multi.Get(op.key[:])) {
-				panic(fmt.Sprintf("Error in Get tx#%d", i))
+			bz := MyGet(multi, rs, op.key[:])
+			if !bytes.Equal(op.value[:], bz) {
+				panic(fmt.Sprintf("Error in Get real %#v expected %#v", bz, op.value[:]))
 			}
 		}
 		if op.opType == OpIterate && len(op.value) != 0 {
@@ -329,7 +415,7 @@ func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, cfg *
 					panicReason = fmt.Sprintf("Key mismatch real %#v expect %#v", iter.Key(), pair.Key)
 					break
 				}
-				if !bytes.Equal(iter.Value(), pair.Value) {
+				if !bytes.Equal(MyIterValue(rs, iter), pair.Value) {
 					panicReason = fmt.Sprintf("Value mismatch real %#v expect %#v", iter.Value(), pair.Value)
 					break
 				}
@@ -350,7 +436,7 @@ func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, cfg *
 			iter.Close()
 		}
 		if op.opType == OpWrite {
-			multi.Set(op.key[:], op.value[:])
+			MySet(multi, rs, op.key[:], op.value[:])
 		}
 		if op.opType == OpDelete {
 			multi.Delete(op.key[:])
@@ -358,7 +444,7 @@ func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, cfg *
 	}
 }
 
-func ExecuteBlock(height int, root storetypes.RootStoreI, block *Block, cfg *FuzzConfig, inParallel bool) {
+func ExecuteBlock(height int, root storetypes.RootStoreI, block *Block, rs randsrc.RandSrc, cfg *FuzzConfig, inParallel bool) {
 	showRoot := func(epochNum int, succeed bool) {
 		iter := root.Iterator([]byte{}, EndKey)
 		defer iter.Close()
@@ -387,11 +473,11 @@ func ExecuteBlock(height int, root storetypes.RootStoreI, block *Block, cfg *Fuz
 			if inParallel {
 				wg.Add(1)
 				go func(tx *Tx, j int) {
-					CheckTx(height, i, j, dbList[j], tx, cfg, epoch.Succeed)
+					CheckTx(height, i, j, dbList[j], tx, rs, cfg, epoch.Succeed)
 					wg.Done()
 				}(tx, j)
 			} else {
-				CheckTx(height, i, j, dbList[j], tx, cfg, epoch.Succeed)
+				CheckTx(height, i, j, dbList[j], tx, rs, cfg, epoch.Succeed)
 			}
 
 		}
@@ -431,11 +517,12 @@ func runTest() {
 		EpochSucceedRatio:    0.95,
 	}
 
+	DBG = false
 	for i := 0; i< roundCount; i++ {
 		fmt.Printf("Block %d\n", i)
 		block := GenerateRandBlock(i, ref, rs, cfg)
-		//ExecuteBlock(i, root, &block, cfg, false) //not in parrallel
-		ExecuteBlock(i, root, &block, cfg, true) //in parrallel
+		ExecuteBlock(i, root, &block, rs, cfg, false) //not in parrallel
+		//ExecuteBlock(i, root, &block, rs, cfg, true) //in parrallel
 	}
 }
 
