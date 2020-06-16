@@ -51,14 +51,6 @@ func (rs *MockRootStore) GetObjCopy(key []byte, ptr *types.Serializable) {
 	}
 }
 
-func (rs *MockRootStore) GetObj(key []byte, ptr *types.Serializable) {
-	if rs.isWritting {panic("isWritting")}
-	status := rs.cacheStore.GetObj(key, ptr)
-	if status != types.Hit {
-		*ptr = nil
-	}
-}
-
 func (rs *MockRootStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
 	if rs.isWritting {panic("isWritting")}
 	status := rs.cacheStore.GetReadOnlyObj(key, ptr)

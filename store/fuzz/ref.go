@@ -24,6 +24,23 @@ func NewRefStore() *RefStore {
 	}
 }
 
+func (rs *RefStore) Clone() *RefStore {
+	newStore := NewRefStore()
+	if len(rs.tobeDel) != 0 {panic("none-zero tobeDel")}
+	if len(rs.justAdd) != 0 {panic("none-zero justAdd")}
+	rs.cs.ScanAllEntries(func(key []byte, obj interface{}, isDeleted bool) {
+		if isDeleted {
+			return
+		}
+		if sobj, ok := obj.(storetypes.Serializable); ok {
+			newStore.cs.SetObj(key, sobj)
+		} else {
+			newStore.cs.Set(key, obj.([]byte))
+		}
+	})
+	return newStore
+}
+
 func (rs *RefStore) Close() {
 	rs.cs.Close()
 }
@@ -86,8 +103,9 @@ func (rs *RefStore) SwitchEpoch() {
 			rs.cs.RealDelete([]byte(key))
 		}
 	}
-	rs.tobeDel = make(map[string]struct{})
-	rs.justAdd = make(map[string]struct{})
+	size1, size2 := len(rs.tobeDel), len(rs.justAdd)
+	rs.tobeDel = make(map[string]struct{}, size1)
+	rs.justAdd = make(map[string]struct{}, size2)
 }
 
 func (rs *RefStore) Iterator(start, end []byte) storetypes.ObjIterator {

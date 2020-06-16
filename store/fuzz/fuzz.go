@@ -60,7 +60,7 @@ type FuzzConfig struct {
 	EffectiveBits        uint32
 	MaxIterDistance      uint32
 	TxSucceedRatio       float32
-	EpochSucceedRatio    float32
+	BlockSucceedRatio    float32
 }
 
 type Pair struct {
@@ -82,7 +82,6 @@ type Tx struct {
 
 type Epoch struct {
 	TxList []*Tx
-	Succeed bool
 }
 
 type Block struct {
@@ -161,7 +160,7 @@ func RecheckIter(ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig, tx *Tx) {
 	}
 }
 
-func GenerateRandTx(ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig, touchedKeys map[uint64]struct{}, epochSuc bool) *Tx {
+func GenerateRandTx(ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig, touchedKeys map[uint64]struct{}) *Tx {
 	readCount, iterCount, writeCount, deleteCount := uint32(0), uint32(0), uint32(0), uint32(0)
 	maxReadCount := rs.GetUint32()%cfg.MaxReadCountInTx
 	maxIterCount := rs.GetUint32()%cfg.MaxIterCountInTx
@@ -172,8 +171,7 @@ func GenerateRandTx(ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig, touchedK
 		Succeed: float32(rs.GetUint32()%0x10000)/float32(0x10000) < cfg.TxSucceedRatio,
 	}
 	var undoList []UndoOp
-	succeed := tx.Succeed && epochSuc
-	if !succeed {
+	if !tx.Succeed {
 		undoList = make([]UndoOp, 0, maxWriteCount + maxDeleteCount)
 	}
 	for readCount!=maxReadCount || iterCount!=maxIterCount || writeCount!=maxWriteCount || deleteCount!=maxDeleteCount {
@@ -235,7 +233,7 @@ func GenerateRandTx(ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig, touchedK
 				value:  v[:],
 			}
 			undo := ref.Set(op.key[:], op.value[:])
-			if succeed {
+			if tx.Succeed {
 				if DBG {fmt.Printf("MarkSet %#v\n", op.key[:])}
 				ref.MarkSet(op.key[:])
 			} else {
@@ -250,7 +248,7 @@ func GenerateRandTx(ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig, touchedK
 				key:    getRand8Bytes(rs, cfg, touchedKeys),
 			}
 			undo := ref.Delete(op.key[:])
-			if succeed {
+			if tx.Succeed {
 				if DBG {fmt.Printf("MarkDelete %#v\n", op.key[:])}
 				ref.MarkDelete(op.key[:])
 			} else {
@@ -260,7 +258,7 @@ func GenerateRandTx(ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig, touchedK
 			deleteCount++
 		}
 	}
-	if succeed { // to prevent inter-tx dependency
+	if tx.Succeed { // to prevent inter-tx dependency
 		for _, op := range tx.OpList {
 			if op.opType == OpRead || op.opType == OpWrite || op.opType == OpDelete {
 				touchedKeys[binary.LittleEndian.Uint64(op.key[:])] = struct{}{}
@@ -281,17 +279,16 @@ func GenerateRandTx(ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig, touchedK
 	return &tx
 }
 
-func GenerateRandEpoch(height, epochNum int, ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig) Epoch {
+func GenerateRandEpoch(height, epochNum int, ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig, blkSuc bool) Epoch {
 	keyCountEstimated := cfg.MaxTxCountInEpoch*(cfg.MaxReadCountInTx+cfg.MaxIterCountInTx*cfg.MaxIterDistance*2+
 		cfg.MaxWriteCountInTx+cfg.MaxDeleteCountInTx)/2
 	touchedKeys := make(map[uint64]struct{}, keyCountEstimated)
 	txCount := rs.GetUint32()%cfg.MaxTxCountInEpoch
 	epoch := Epoch{TxList: make([]*Tx, int(txCount))}
-	epoch.Succeed = float32(rs.GetUint32()%0x10000)/float32(0x10000) < cfg.EpochSucceedRatio
 	for i := range epoch.TxList {
-		tx := GenerateRandTx(ref, rs, cfg, touchedKeys, epoch.Succeed)
+		tx := GenerateRandTx(ref, rs, cfg, touchedKeys)
 		if DBG {
-			fmt.Printf("FinishGeneration h:%d epoch %d (%v) tx %d (%v) of %d\n", height, epochNum, epoch.Succeed, i, tx.Succeed, txCount)
+			fmt.Printf("FinishGeneration h:%d (%v) epoch %d tx %d (%v) of %d\n", height, blkSuc, epochNum, i, tx.Succeed, txCount)
 			for j, op := range tx.OpList {
 				fmt.Printf("See operation %d of %d\n", j, len(tx.OpList))
 				fmt.Printf("%#v\n", op)
@@ -300,10 +297,8 @@ func GenerateRandEpoch(height, epochNum int, ref *RefStore, rs randsrc.RandSrc, 
 		epoch.TxList[i] = tx
 	}
 	ref.SwitchEpoch()
-	if epoch.Succeed {
-		for _, tx := range epoch.TxList {
-			RecheckIter(ref, rs, cfg, tx)
-		}
+	for _, tx := range epoch.TxList {
+		RecheckIter(ref, rs, cfg, tx)
 	}
 
 	iter := ref.Iterator([]byte{}, EndKey)
@@ -319,9 +314,13 @@ func GenerateRandEpoch(height, epochNum int, ref *RefStore, rs randsrc.RandSrc, 
 func GenerateRandBlock(height int, ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig) Block {
 	epochCount := rs.GetUint32()%cfg.MaxEpochCountInBlock
 	block := Block{EpochList: make([]Epoch, epochCount)}
+	block.Succeed = float32(rs.GetUint32()%0x10000)/float32(0x10000) < cfg.BlockSucceedRatio
+	if !block.Succeed {
+		ref = ref.Clone()
+	}
 	for i := range block.EpochList {
 		if DBG {fmt.Printf("Generating h:%d epoch %d of %d\n", height, i, epochCount)}
-		block.EpochList[i] = GenerateRandEpoch(height, i, ref, rs, cfg)
+		block.EpochList[i] = GenerateRandEpoch(height, i, ref, rs, cfg, block.Succeed)
 	}
 	return block
 }
@@ -386,10 +385,10 @@ func MyIterValue(rs randsrc.RandSrc, iter storetypes.ObjIterator) []byte {
 	}
 }
 
-func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, rs randsrc.RandSrc, cfg *FuzzConfig, epochSuc bool) {
+func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, rs randsrc.RandSrc, cfg *FuzzConfig, blkSuc bool) {
 	for i, op := range tx.OpList {
 		if DBG {
-			fmt.Printf("Check %d-%d (%v) tx %d (%v) operation %d of %d\n", height, epochNum, epochSuc, txNum,  tx.Succeed, i, len(tx.OpList))
+			fmt.Printf("Check %d-%d (%v) tx %d (%v) operation %d of %d\n", height, epochNum, blkSuc, txNum,  tx.Succeed, i, len(tx.OpList))
 			fmt.Printf("%#v\n", op)
 		}
 		if op.opType == OpRead {
@@ -424,6 +423,9 @@ func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, rs ra
 			}
 			if len(panicReason) == 0 && iter.Valid() && len(op.results) < int(cfg.MaxIterDistance) {
 				panicReason = "Iterator Should be Invalid"
+				if MyIterValue(rs, iter) != nil {
+					panicReason = "Iterator Should be Invalid and Value should be nil"
+				}
 			}
 			if len(panicReason) != 0 {
 				fmt.Printf("Remaining (at most 10):\n")
@@ -445,39 +447,31 @@ func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, rs ra
 }
 
 func ExecuteBlock(height int, root storetypes.RootStoreI, block *Block, rs randsrc.RandSrc, cfg *FuzzConfig, inParallel bool) {
-	showRoot := func(epochNum int, succeed bool) {
-		iter := root.Iterator([]byte{}, EndKey)
-		defer iter.Close()
-		for iter.Valid() {
-			fmt.Printf("CHECK.AT %d-%d (%v) key: %#v Value:%#v\n", height, epochNum, succeed, iter.Key(), iter.Value())
-			iter.Next()
-		}
-	}
-	//showTrunk := func(trunk *store.TrunkStore, epochNum, txNum int, epochSuc, txSuc bool) {
+	//showTrunk := func(trunk *store.TrunkStore, epochNum, txNum int, blkSuc, txSuc bool) {
 	//	fmt.Printf("Dumping\n")
 	//	iter := trunk.Iterator([]byte{}, EndKey)
 	//	defer iter.Close()
 	//	for iter.Valid() {
-	//		fmt.Printf("CHECK.AT %d-%d (%v) tx %d (%v) key: %#v Value:%#v\n", height, epochNum, epochSuc, txNum, txSuc, iter.Key(), iter.Value())
+	//		fmt.Printf("CHECK.AT %d-%d (%v) tx %d (%v) key: %#v Value:%#v\n", height, epochNum, blkSuc, txNum, txSuc, iter.Key(), iter.Value())
 	//		iter.Next()
 	//	}
 	//}
+	trunk := root.GetTrunkStore().(*store.TrunkStore)
 	for i, epoch := range block.EpochList {
-		if DBG {fmt.Printf("Check h:%d epoch %d (%v) of %d\n", height, i, epoch.Succeed, len(block.EpochList))}
-		trunk := root.GetTrunkStore().(*store.TrunkStore)
+		if DBG {fmt.Printf("Check h:%d (%v) epoch %d of %d\n", height, block.Succeed, i, len(block.EpochList))}
 		dbList := make([]*store.MultiStore, len(epoch.TxList))
 		var wg sync.WaitGroup
 		for j, tx := range epoch.TxList {
 			dbList[j] = trunk.Cached()
-			if DBG {fmt.Printf("Check h:%d epoch %d (%v) tx %d (%v) of %d\n", height, i, epoch.Succeed, j, tx.Succeed, len(epoch.TxList))}
+			if DBG {fmt.Printf("Check h:%d (%v) epoch %d tx %d (%v) of %d\n", height, block.Succeed, i, j, tx.Succeed, len(epoch.TxList))}
 			if inParallel {
 				wg.Add(1)
 				go func(tx *Tx, j int) {
-					CheckTx(height, i, j, dbList[j], tx, rs, cfg, epoch.Succeed)
+					CheckTx(height, i, j, dbList[j], tx, rs, cfg, block.Succeed)
 					wg.Done()
 				}(tx, j)
 			} else {
-				CheckTx(height, i, j, dbList[j], tx, rs, cfg, epoch.Succeed)
+				CheckTx(height, i, j, dbList[j], tx, rs, cfg, block.Succeed)
 			}
 
 		}
@@ -485,11 +479,17 @@ func ExecuteBlock(height int, root storetypes.RootStoreI, block *Block, rs rands
 		for j, tx := range epoch.TxList {
 			if DBG {fmt.Printf("WriteBack %d-%d tx %d : %v\n", height, i, j, tx.Succeed)}
 			dbList[j].Close(tx.Succeed)
-			//showTrunk(trunk, i, j, tx.Succeed, epoch.Succeed)
+			//showTrunk(trunk, i, j, tx.Succeed, block.Succeed)
 		}
-		trunk.Close(epoch.Succeed)
-
-		if DBG {showRoot(i, epoch.Succeed)}
+	}
+	trunk.Close(block.Succeed)
+	if DBG {
+		iter := root.Iterator([]byte{}, EndKey)
+		defer iter.Close()
+		for iter.Valid() {
+			fmt.Printf("BLOCK.AT %d (%v) key: %#v Value:%#v\n", height, block.Succeed, iter.Key(), iter.Value())
+			iter.Next()
+		}
 	}
 }
 
@@ -514,7 +514,7 @@ func runTest() {
 		EffectiveBits:        16,
 		MaxIterDistance:      16,
 		TxSucceedRatio:       0.85,
-		EpochSucceedRatio:    0.95,
+		BlockSucceedRatio:    0.95,
 	}
 
 	DBG = false
