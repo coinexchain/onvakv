@@ -18,9 +18,10 @@ const (
 )
 
 type HotEntry struct {
-	EntryPtr   *Entry
-	Operation  OperationOnEntry
-	IsModified bool
+	EntryPtr        *Entry
+	Operation       OperationOnEntry
+	IsModified      bool
+	IsTouchedByNext bool
 }
 
 type Iterator interface {

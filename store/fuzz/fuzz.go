@@ -9,10 +9,70 @@ import (
 	"strconv"
 
 	"github.com/coinexchain/randsrc"
+	"github.com/coinexchain/onvakv"
 	"github.com/coinexchain/onvakv/store"
 	storetypes "github.com/coinexchain/onvakv/store/types"
 )
 
+const (
+	RootType = "MockDataTree" //MockRoot MockDataTree Real
+	FirstByteOfCacheableKey = byte(8)
+)
+
+var (
+	GuardStart = []byte{0, 0, 0, 0, 0, 0, 0, 0}
+	GuardEnd = []byte{255, 255, 255, 255, 255, 255, 255, 255, 255, 255}
+	EndKey = []byte{255, 255, 255, 255, 255, 255, 255, 255, 255}
+)
+
+var DBG bool
+
+func runTest() {
+	DBG = false
+	randFilename := os.Getenv("RANDFILE")
+	roundCount, err := strconv.Atoi(os.Getenv("RANDCOUNT"))
+	if err != nil {
+		panic(err)
+	}
+
+	rs := randsrc.NewRandSrcFromFileWithSeed(randFilename, []byte{0})
+	var root storetypes.RootStoreI
+	if RootType == "MockRoot" {
+		root = store.NewMockRootStore()
+	} else if RootType == "MockDataTree" {
+		os.RemoveAll("./rocksdb.db")
+		okv := onvakv.NewOnvaKV4Mock()
+		okv.InitGuards(GuardStart, GuardEnd)
+		root = store.NewRootStore(okv, nil, func(k []byte) bool {
+			return k[0] == FirstByteOfCacheableKey
+		})
+	}
+	ref := NewRefStore()
+	fmt.Printf("Initialized\n")
+	cfg := &FuzzConfig {
+		MaxReadCountInTx:     10,
+		MaxIterCountInTx:     5,
+		MaxWriteCountInTx:    10,
+		MaxDeleteCountInTx:   10,
+		MaxTxCountInEpoch:    100,
+		MaxEpochCountInBlock: 5,
+		EffectiveBits:        16,
+		MaxIterDistance:      16,
+		TxSucceedRatio:       0.85,
+		BlockSucceedRatio:    0.95,
+	}
+
+	for i := 0; i< roundCount; i++ {
+		fmt.Printf("Block %d\n", i)
+		root.CheckConsistency()
+		block := GenerateRandBlock(i, ref, rs, cfg)
+		ExecuteBlock(i, root, &block, rs, cfg, false) //not in parrallel
+		//ExecuteBlock(i, root, &block, rs, cfg, true) //in parrallel
+	}
+	if RootType == "MockDataTree" {
+		os.RemoveAll("./rocksdb.db")
+	}
+}
 
 const (
 	OpRead = 8
@@ -45,10 +105,6 @@ func (coord *Coord) DeepCopy() interface{} {
 		y: coord.y,
 	}
 }
-
-var DBG bool
-
-var EndKey = []byte{255, 255, 255, 255, 255, 255, 255, 255, 255}
 
 type FuzzConfig struct {
 	MaxReadCountInTx     uint32
@@ -394,7 +450,7 @@ func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, rs ra
 		if op.opType == OpRead {
 			bz := MyGet(multi, rs, op.key[:])
 			if !bytes.Equal(op.value[:], bz) {
-				panic(fmt.Sprintf("Error in Get real %#v expected %#v", bz, op.value[:]))
+				panic(fmt.Sprintf("Error in Get %#v real %#v expected %#v", op.key[:], bz, op.value[:]))
 			}
 		}
 		if op.opType == OpIterate && len(op.value) != 0 {
@@ -418,7 +474,7 @@ func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, rs ra
 					panicReason = fmt.Sprintf("Value mismatch real %#v expect %#v", iter.Value(), pair.Value)
 					break
 				}
-				if DBG {fmt.Printf("Key match real %#v expect %#v\n", iter.Key(), pair.Key)}
+				//if DBG {fmt.Printf("Key match real %#v expect %#v\n", iter.Key(), pair.Key)}
 				iter.Next()
 			}
 			if len(panicReason) == 0 && iter.Valid() && len(op.results) < int(cfg.MaxIterDistance) {
@@ -456,6 +512,7 @@ func ExecuteBlock(height int, root storetypes.RootStoreI, block *Block, rs rands
 	//		iter.Next()
 	//	}
 	//}
+	root.SetHeight(int64(height))
 	trunk := root.GetTrunkStore().(*store.TrunkStore)
 	for i, epoch := range block.EpochList {
 		if DBG {fmt.Printf("Check h:%d (%v) epoch %d of %d\n", height, block.Succeed, i, len(block.EpochList))}
@@ -490,39 +547,6 @@ func ExecuteBlock(height int, root storetypes.RootStoreI, block *Block, rs rands
 			fmt.Printf("BLOCK.AT %d (%v) key: %#v Value:%#v\n", height, block.Succeed, iter.Key(), iter.Value())
 			iter.Next()
 		}
-	}
-}
-
-func runTest() {
-	randFilename := os.Getenv("RANDFILE")
-	roundCount, err := strconv.Atoi(os.Getenv("RANDCOUNT"))
-	if err != nil {
-		panic(err)
-	}
-
-	rs := randsrc.NewRandSrcFromFileWithSeed(randFilename, []byte{0})
-	root := store.NewMockRootStore()
-	ref := NewRefStore()
-	fmt.Printf("Initialized\n")
-	cfg := &FuzzConfig {
-		MaxReadCountInTx:     10,
-		MaxIterCountInTx:     5,
-		MaxWriteCountInTx:    10,
-		MaxDeleteCountInTx:   10,
-		MaxTxCountInEpoch:    100,
-		MaxEpochCountInBlock: 5,
-		EffectiveBits:        16,
-		MaxIterDistance:      16,
-		TxSucceedRatio:       0.85,
-		BlockSucceedRatio:    0.95,
-	}
-
-	DBG = false
-	for i := 0; i< roundCount; i++ {
-		fmt.Printf("Block %d\n", i)
-		block := GenerateRandBlock(i, ref, rs, cfg)
-		ExecuteBlock(i, root, &block, rs, cfg, false) //not in parrallel
-		//ExecuteBlock(i, root, &block, rs, cfg, true) //in parrallel
 	}
 }
 

@@ -146,6 +146,5 @@ func (ts *TrunkStore) Close(writeBack bool) {
 	ts.cache.Close()
 	ts.cache = nil
 	ts.root = nil
-	ts.storeKeys = nil
 }
 

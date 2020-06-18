@@ -76,5 +76,6 @@ type RootStoreI interface {
 	SetObj(key []byte, obj Serializable)
 	Delete(key []byte)
 	EndWrite()
+	CheckConsistency()
 }
 

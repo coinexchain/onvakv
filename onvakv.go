@@ -2,7 +2,7 @@ package onvakv
 
 import (
 	"bytes"
-	//"fmt"
+	"fmt"
 	"os"
 	"math"
 	"sort"
@@ -30,6 +30,8 @@ type OnvaKV struct {
 	rootHash      []byte
 	k2heMap       *sync.Map // key-to-hot-entry map
 	cachedEntries []*HotEntry
+	startKey      []byte
+	endKey        []byte
 }
 
 func NewOnvaKV4Mock() *OnvaKV {
@@ -127,6 +129,18 @@ func (okv *OnvaKV) GetEntry(k []byte) *Entry {
 	return okv.datTree.ReadEntry(int64(pos))
 }
 
+func isFakeInserted(hotEntry *HotEntry) bool {
+	return hotEntry.EntryPtr.SerialNum == -1 && hotEntry.EntryPtr.Value == nil
+}
+
+func isInserted(hotEntry *HotEntry) bool {
+	return hotEntry.Operation == types.OpInsertOrChange && hotEntry.EntryPtr.SerialNum == -1
+}
+
+func isModified(hotEntry *HotEntry) bool {
+	return hotEntry.Operation == types.OpInsertOrChange && hotEntry.EntryPtr.SerialNum >= 0
+}
+
 func (okv *OnvaKV) PrepareForUpdate(k []byte) {
 	//fmt.Printf("In PrepareForUpdate we see: %s\n", string(k))
 	pos, findIt := okv.idxTree.Get(k)
@@ -148,7 +162,7 @@ func (okv *OnvaKV) PrepareForUpdate(k []byte) {
 	//fmt.Printf("Now we add entry to k2e(not-findIt): %s(%#v)\n", string(k), k)
 	okv.k2heMap.Store(string(k), &HotEntry{
 		EntryPtr: &Entry{
-			Key:        k,
+			Key:        append([]byte{}, k...),
 			Value:      nil,
 			NextKey:    nil,
 			Height:     0,
@@ -182,13 +196,14 @@ func (okv *OnvaKV) PrepareForUpdate(k []byte) {
 }
 
 func (okv *OnvaKV) PrepareForDeletion(k []byte) (findIt bool) {
-	//fmt.Printf("In PrepareForDeletion we see: %s\n", string(k))
+	//fmt.Printf("In PrepareForDeletion we see: %#v\n", k)
 	pos, findIt := okv.idxTree.Get(k)
 	if !findIt {
 		return
 	}
 
 	entry := okv.datTree.ReadEntry(int64(pos))
+	//fmt.Printf("In PrepareForDeletion we read: %#v\n", entry)
 	kStr := string(entry.Key)
 	v, ok := okv.k2heMap.Load(kStr)
 	if !ok || v == nil {
@@ -216,7 +231,11 @@ func (okv *OnvaKV) PrepareForDeletion(k []byte) (findIt bool) {
 	return
 }
 
-func makeFakeHotEntry(key string) *HotEntry {
+func isHintHotEntry(hotEntry *HotEntry) bool {
+	return hotEntry.EntryPtr.SerialNum == math.MinInt64
+}
+
+func makeHintHotEntry(key string) *HotEntry {
 	return &HotEntry {
 		EntryPtr: &Entry{
 			Key:        []byte(key),
@@ -224,7 +243,7 @@ func makeFakeHotEntry(key string) *HotEntry {
 			NextKey:    nil,
 			Height:     -1,
 			LastHeight: -1,
-			SerialNum:  math.MaxInt64, // fake entry has largest possible SerialNum
+			SerialNum:  math.MinInt64, // hint entry has smallest possible SerialNum
 		},
 		Operation: types.OpNone,
 	}
@@ -257,7 +276,6 @@ func (okv *OnvaKV) BeginWrite(height int64) {
 }
 
 func (okv *OnvaKV) Set(key, value []byte) {
-	//fmt.Printf("In Set we see: %s %s\n", string(key), string(value))
 	v, ok := okv.k2heMap.Load(string(key))
 	if !ok {
 		panic("Can not find entry in cache")
@@ -265,32 +283,38 @@ func (okv *OnvaKV) Set(key, value []byte) {
 	if v == nil {
 		panic("Can not change or insert at a fake entry")
 	}
-	entry := v.(*HotEntry)
-	entry.EntryPtr.Value = value
-	entry.Operation = types.OpInsertOrChange
+	//fmt.Printf("In Set we see: %#v %#v\n", key, value)
+	hotEntry := v.(*HotEntry)
+	hotEntry.EntryPtr.Value = value
+	hotEntry.Operation = types.OpInsertOrChange
 }
 
 func (okv *OnvaKV) Delete(key []byte) {
 	//fmt.Printf("In Delete we see: %s(%#v)\n", string(key), key)
 	v, ok := okv.k2heMap.Load(string(key))
 	if !ok {
-		panic("Can not find entry in cache")
+		return // delete a non-exist kv pair
+		//panic(fmt.Sprintf("Can not find entry in cache %#v", key))
 	}
 	if v == nil {
-		panic("Can not delete a fake entry")
+		return // delete a non-exist kv pair
+		//panic(fmt.Sprintf("Can not delete a fake hotEntry, key: %#v", key))
 	}
-	entry := v.(*HotEntry)
-	entry.Operation = types.OpDelete
+	hotEntry := v.(*HotEntry)
+	hotEntry.Operation = types.OpDelete
 }
 
 func getPrev(cachedEntries []*HotEntry, i int) int {
 	var j int
 	for j = i-1; j >= 0; j-- {
-		if cachedEntries[j].Operation != types.OpDelete {
+		if cachedEntries[j].Operation != types.OpDelete && !isFakeInserted(cachedEntries[j]) {
 			break
 		}
 	}
 	if j < 0 {
+		for j = i; j >= 0; j-- {
+			fmt.Printf("Debug j %d hotEntry %#v Entry %#v\n", j, cachedEntries[j], cachedEntries[j].EntryPtr)
+		}
 		panic("Can not find previous entry")
 	}
 	return j
@@ -299,12 +323,15 @@ func getPrev(cachedEntries []*HotEntry, i int) int {
 func getNext(cachedEntries []*HotEntry, i int) int {
 	var j int
 	for j = i+1; j < len(cachedEntries); j++ {
-		if cachedEntries[j].Operation != types.OpDelete {
+		if cachedEntries[j].Operation != types.OpDelete && !isFakeInserted(cachedEntries[j]) {
 			break
 		}
 	}
 	if j >= len(cachedEntries) {
-		panic("Can not find previous entry")
+		for j = i; j < len(cachedEntries); j++ {
+			fmt.Printf("Debug j %d hotEntry %#v Entry %#v\n", j, cachedEntries[j], cachedEntries[j].EntryPtr)
+		}
+		panic("Can not find next entry")
 	}
 	return j
 }
@@ -313,10 +340,11 @@ func (okv *OnvaKV) update() {
 	okv.k2heMap.Range(func(key, value interface{}) bool {
 		if value == nil {
 			keyStr := key.(string)
-		        okv.cachedEntries = append(okv.cachedEntries, makeFakeHotEntry(keyStr))
+		        okv.cachedEntries = append(okv.cachedEntries, makeHintHotEntry(keyStr))
 		} else {
-			entryX := value.(*HotEntry)
-		        okv.cachedEntries = append(okv.cachedEntries, entryX)
+			hotEntry := value.(*HotEntry)
+			//fmt.Printf("HERE key: %#v HotEntry: %#v Entry: %#v\n", []byte(key.(string)), hotEntry, *(hotEntry.EntryPtr))
+		        okv.cachedEntries = append(okv.cachedEntries, hotEntry)
 		}
 		return true
 	})
@@ -324,47 +352,55 @@ func (okv *OnvaKV) update() {
 		return bytes.Compare(okv.cachedEntries[i].EntryPtr.Key, okv.cachedEntries[j].EntryPtr.Key) < 0
 	})
 	// set NextKey to correct values and mark IsModified
-	for i, entryX := range okv.cachedEntries {
-		if entryX.Operation != types.OpNone && entryX.EntryPtr.SerialNum == math.MaxInt64 {
-			panic("Operate on a fake entry")
+	for i, hotEntry := range okv.cachedEntries {
+		if hotEntry.Operation != types.OpNone && isHintHotEntry(hotEntry) {
+			panic("Operate on a hint entry")
 		}
-		if entryX.Operation == types.OpDelete {
-			entryX.IsModified = true
+		if isFakeInserted(hotEntry) {
+			continue
+		}
+		if hotEntry.Operation == types.OpDelete {
+			hotEntry.IsModified = true
 			next := getNext(okv.cachedEntries, i)
 			nextKey := okv.cachedEntries[next].EntryPtr.Key
 			prev := getPrev(okv.cachedEntries, i)
 			okv.cachedEntries[prev].EntryPtr.NextKey = nextKey
-			okv.cachedEntries[prev].IsModified = true
-		} else if entryX.Operation == types.OpInsertOrChange {
-			entryX.IsModified = true
+			okv.cachedEntries[prev].IsTouchedByNext = true
+		} else if isInserted(hotEntry) {
+			hotEntry.IsModified = true
+			//fmt.Printf("THERE key: %#v HotEntry: %#v Entry: %#v\n", hotEntry.EntryPtr.Key, hotEntry, *(hotEntry.EntryPtr))
 			next := getNext(okv.cachedEntries, i)
-			entryX.EntryPtr.NextKey = okv.cachedEntries[next].EntryPtr.Key
+			hotEntry.EntryPtr.NextKey = okv.cachedEntries[next].EntryPtr.Key
 			prev := getPrev(okv.cachedEntries, i)
-			okv.cachedEntries[prev].EntryPtr.NextKey = entryX.EntryPtr.Key
-			okv.cachedEntries[prev].IsModified = true
-			//fmt.Printf("this: %s(%#v) prev %d: %s(%#v) next %d: %s(%#v)\n", entryX.EntryPtr.Key, entryX.EntryPtr.Key,
+			okv.cachedEntries[prev].EntryPtr.NextKey = hotEntry.EntryPtr.Key
+			okv.cachedEntries[prev].IsTouchedByNext = true
+			//fmt.Printf("this: %s(%#v) prev %d: %s(%#v) next %d: %s(%#v)\n", hotEntry.EntryPtr.Key, hotEntry.EntryPtr.Key,
 			//	prev, okv.cachedEntries[prev].EntryPtr.Key, okv.cachedEntries[prev].EntryPtr.Key,
 			//	next,  okv.cachedEntries[next].EntryPtr.Key, okv.cachedEntries[next].EntryPtr.Key)
+		} else if isModified(hotEntry) {
+			hotEntry.IsModified = true
 		}
 	}
 	// update stored data
-	for _, entryX := range okv.cachedEntries {
-		if !entryX.IsModified {
+	for _, hotEntry := range okv.cachedEntries {
+		if !(hotEntry.IsModified || hotEntry.IsTouchedByNext) {
 			continue
 		}
-		ptr := entryX.EntryPtr
-		if entryX.Operation == types.OpDelete {
-			//fmt.Printf("Now we deactive %d for deletion\n", ptr.SerialNum)
+		ptr := hotEntry.EntryPtr
+		if hotEntry.Operation == types.OpDelete && ptr.SerialNum >= 0 {
+			// if ptr.SerialNum==-1, then we are deleting a just-inserted value, so ignore it.
+			//fmt.Printf("Now we deactive %d for deletion %#v\n", ptr.SerialNum, ptr)
 			okv.idxTree.Delete(ptr.Key)
 			okv.DeactiviateEntry(ptr.SerialNum)
-		} else {
+		} else if hotEntry.Operation != types.OpNone || hotEntry.IsTouchedByNext {
 			if ptr.SerialNum >= 0 { // if this entry already exists
+				//fmt.Printf("Now we deactive %d for refresh %#v\n", ptr.SerialNum, ptr)
 				okv.DeactiviateEntry(ptr.SerialNum)
 			}
 			ptr.LastHeight = ptr.Height
 			ptr.Height = okv.meta.GetCurrHeight()
 			ptr.SerialNum = okv.meta.GetMaxSerialNum()
-			//fmt.Printf("Now SerialNum = %d for %s(%#v)\n", ptr.SerialNum, string(ptr.Key), ptr.Key)
+			//fmt.Printf("Now SerialNum = %d for %s(%#v) %#v Entry %#v\n", ptr.SerialNum, string(ptr.Key), ptr.Key, hotEntry, *ptr)
 			okv.meta.IncrMaxSerialNum()
 			pos := okv.datTree.AppendEntry(ptr)
 			okv.idxTree.Set(ptr.Key, uint64(pos))
@@ -380,6 +416,22 @@ func (okv *OnvaKV) DeactiviateEntry(sn int64) {
 		entry := datatree.DummyEntry(sn)
 		okv.datTree.AppendEntry(entry)
 		okv.datTree.DeactiviateEntry(sn)
+	}
+}
+
+func (okv *OnvaKV) CheckConsistency() {
+	iter := okv.idxTree.ReverseIterator([]byte{}, okv.endKey)
+	defer iter.Close()
+	nextKey := okv.endKey
+	for iter.Valid() && !bytes.Equal(iter.Key(), okv.startKey) {
+		pos := iter.Value()
+		entry := okv.datTree.ReadEntry(int64(pos))
+		if !bytes.Equal(entry.NextKey, nextKey) {
+			panic(fmt.Sprintf("Invalid NextKey for %#v, datTree %#v, idxTree %#v\n",
+				iter.Key(), entry.NextKey, nextKey))
+		}
+		nextKey = iter.Key()
+		iter.Next()
 	}
 }
 
@@ -413,6 +465,8 @@ func (okv *OnvaKV) EndWrite() {
 }
 
 func (okv *OnvaKV) InitGuards(startKey, endKey []byte) {
+	okv.startKey = append([]byte{}, startKey...)
+	okv.endKey = append([]byte{}, endKey...)
 	okv.idxTree.BeginWrite(-1)
 	okv.meta.SetCurrHeight(-1)
 
@@ -441,6 +495,8 @@ func (okv *OnvaKV) InitGuards(startKey, endKey []byte) {
 	okv.idxTree.EndWrite()
 	okv.rootHash = okv.datTree.EndBlock()
 	okv.meta.Commit()
+	okv.rocksdb.CloseOldBatch()
+	okv.rocksdb.OpenNewBatch()
 }
 
 func (okv *OnvaKV) PruneBeforeHeight(height int64) {

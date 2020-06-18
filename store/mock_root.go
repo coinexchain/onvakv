@@ -117,3 +117,5 @@ func (rs *MockRootStore) EndWrite() {
 	rs.preparedForDeletion = &sync.Map{}
 }
 
+func (rs *MockRootStore) CheckConsistency() {
+}

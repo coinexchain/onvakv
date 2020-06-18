@@ -117,6 +117,10 @@ func (root *RootStore) EndWrite() {
 	root.okv.EndWrite()
 }
 
+func (root *RootStore) CheckConsistency() {
+	root.okv.CheckConsistency()
+}
+
 func (root *RootStore) addToCache(key []byte, obj types.Serializable) {
 	if !root.isCacheableKey(key) {
 		return

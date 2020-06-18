@@ -1,6 +1,8 @@
 package datatree
 
 import (
+	"fmt"
+
 	"github.com/coinexchain/onvakv/types"
 )
 
@@ -22,6 +24,7 @@ func NewMockDataTree() *MockDataTree {
 }
 
 func (dt *MockDataTree) DeactiviateEntry(sn int64) int {
+	//fmt.Printf("Here DataTree.DeactiviateEntry(sn=%d)\n", sn)
 	twigID := sn >> TwigShift
 	dt.twigs[twigID].activeBits[sn&TwigMask] = false
 	return 0
@@ -70,7 +73,7 @@ func (dt *MockDataTree) GetActiveEntriesInTwig(twigID int64) []*Entry {
 }
 
 func (dt *MockDataTree) ScanEntries(oldestActiveTwigID int64, handler types.EntryHandler) {
-	panic("not implemented")
+	panic(fmt.Sprintf("ScanEntries not implemented. oldestActiveTwigID=%d", oldestActiveTwigID))
 }
 
 func (dt *MockDataTree) TwigCanBePruned(twigID int64) bool {
