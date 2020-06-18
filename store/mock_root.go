@@ -119,3 +119,6 @@ func (rs *MockRootStore) EndWrite() {
 
 func (rs *MockRootStore) CheckConsistency() {
 }
+
+func (rs *MockRootStore) Close() {
+}

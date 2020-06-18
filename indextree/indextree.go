@@ -133,6 +133,10 @@ func (tree *NVTreeMem) Close() {
 	tree.bt.Close()
 }
 
+func (tree *NVTreeMem) ActiveCount() int {
+	return tree.bt.Len()
+}
+
 // Load the RocksDB and use its up-to-date records to initialize the in-memory B-Tree.
 // RocksDB's historical records are ignored.
 func (tree *NVTreeMem) Init(repFn func([]byte)) (err error) {

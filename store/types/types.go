@@ -77,5 +77,6 @@ type RootStoreI interface {
 	Delete(key []byte)
 	EndWrite()
 	CheckConsistency()
+	Close()
 }
 

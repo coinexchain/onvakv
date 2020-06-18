@@ -7,19 +7,6 @@ import (
 	"github.com/coinexchain/onvakv/indextree/b"
 )
 
-type IndexTree interface {
-	Init(dirname string, repFn func([]byte)) error
-	BeginWrite(height int64)
-	EndWrite()
-	GetAtHeight(k []byte, height uint64) (uint64, bool)
-
-	Iterator(start, end []byte) Iterator
-	ReverseIterator(start, end []byte) Iterator
-	Get(k []byte) (uint64, bool)
-	Set(k []byte, v uint64)
-	Delete(k []byte)
-}
-
 type MockIndexTree struct {
 	bt *b.Tree
 }
@@ -28,6 +15,10 @@ func NewMockIndexTree() *MockIndexTree {
 	return &MockIndexTree{
 		bt: b.TreeNew(bytes.Compare),
 	}
+}
+
+func (it *MockIndexTree) ActiveCount() int {
+	return it.bt.Len()
 }
 
 func (it *MockIndexTree) Init(repFn func([]byte)) error {

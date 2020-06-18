@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"reflect"
 
 	dbm "github.com/tendermint/tm-db"
@@ -49,10 +50,13 @@ func (root *RootStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
 		obj, ok = root.cache[string(key)]
 	}
 	if ok {
+		//fmt.Printf("HIT on %#v : %#v\n", key, obj.ToBytes())
 		reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(obj))
 	} else if bz := root.Get(key); bz != nil {
 		(*ptr).FromBytes(bz)
-		root.addToCache(key, *ptr)
+		if root.isCacheableKey(key) {
+			root.addToCache(key, *ptr)
+		}
 	} else {
 		*ptr = nil
 	}
@@ -64,6 +68,7 @@ func (root *RootStore) GetObjCopy(key []byte, ptr *types.Serializable) {
 		obj, ok = root.cache[string(key)]
 	}
 	if ok {
+		//fmt.Printf("HIT on %#v : %#v\n", key, obj.ToBytes())
 		newObj := obj.DeepCopy().(types.Serializable)
 		reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(newObj))
 	} else if bz := root.Get(key); bz != nil {
@@ -94,18 +99,27 @@ func (root *RootStore) ReverseIterator(start, end []byte) types.ObjIterator {
 
 func (root *RootStore) BeginWrite() {
 	if root.height < 0 {
-		panic("Height is not initialized")
+		panic(fmt.Sprintf("Height is not initialized: %", root.height))
 	}
 	root.okv.BeginWrite(root.height)
 }
 
 func (root *RootStore) Set(key, value []byte) {
 	root.okv.Set(key, value)
+	if root.isCacheableKey(key) {
+		_, ok := root.cache[string(key)]
+		if ok {
+			//fmt.Printf("CACHE-UPDATE on %#v : %#v\n", key, value)
+			root.cache[string(key)].FromBytes(value)
+		}
+	}
 }
 
 func (root *RootStore) SetObj(key []byte, obj types.Serializable) {
 	root.okv.Set(key, obj.ToBytes())
-	root.addToCache(key, obj)
+	if root.isCacheableKey(key) {
+		root.addToCache(key, obj)
+	}
 }
 
 func (root *RootStore) Delete(key []byte) {
@@ -122,15 +136,13 @@ func (root *RootStore) CheckConsistency() {
 }
 
 func (root *RootStore) addToCache(key []byte, obj types.Serializable) {
-	if !root.isCacheableKey(key) {
-		return
-	}
 	if len(root.cache) > CacheSizeLimit {
 		for k := range root.cache {
 			delete(root.cache, k) //remove a random entry
 			break
 		}
 	}
+	//fmt.Printf("CACHE-INSERT on %#v : %#v\n", key, obj.ToBytes())
 	root.cache[string(key)] = obj //.DeepCopy().(types.Serializable) // maybe we do not need deepcopy
 }
 
@@ -145,6 +157,11 @@ func (root *RootStore) GetTrunkStore() interface{} {
 
 func (root *RootStore) GetRootHash() []byte {
 	return root.okv.GetRootHash()
+}
+
+func (root *RootStore) Close() {
+	root.okv.Close()
+	root.cache = nil
 }
 
 type RootStoreIterator struct {

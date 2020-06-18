@@ -35,6 +35,7 @@ type Iterator interface {
 
 type IndexTree interface {
 	Init(repFn func([]byte)) error
+	ActiveCount() int
 	BeginWrite(height int64)
 	EndWrite()
 	Iterator(start, end []byte) Iterator
@@ -88,10 +89,10 @@ type MetaDB interface {
 	GetMaxSerialNum() int64
 	IncrMaxSerialNum() // It should call setTwigHeight(twigID int64, height int64)
 
-	// the count of all the active entries, increased in AppendEntry, decreased in DeactiviateEntry
-	GetActiveEntryCount() int64
-	IncrActiveEntryCount()
-	DecrActiveEntryCount()
+	//// the count of all the active entries, increased in AppendEntry, decreased in DeactiviateEntry
+	//GetActiveEntryCount() int64
+	//IncrActiveEntryCount()
+	//DecrActiveEntryCount()
 
 	// the ID of the oldest active twig, increased by ReapOldestActiveTwig
 	GetOldestActiveTwigID() int64

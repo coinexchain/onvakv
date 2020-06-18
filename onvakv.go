@@ -18,7 +18,7 @@ import (
 
 const (
 	defaultFileSize = 1024*1024*1024
-	StartReapThres int64 = 1000 * 1000
+	StartReapThres int64 = 10000 // 1000 * 1000
 	KeptEntriesToActiveEntriesRation = 3
 )
 
@@ -294,11 +294,9 @@ func (okv *OnvaKV) Delete(key []byte) {
 	v, ok := okv.k2heMap.Load(string(key))
 	if !ok {
 		return // delete a non-exist kv pair
-		//panic(fmt.Sprintf("Can not find entry in cache %#v", key))
 	}
 	if v == nil {
 		return // delete a non-exist kv pair
-		//panic(fmt.Sprintf("Can not delete a fake hotEntry, key: %#v", key))
 	}
 	hotEntry := v.(*HotEntry)
 	hotEntry.Operation = types.OpDelete
@@ -312,9 +310,9 @@ func getPrev(cachedEntries []*HotEntry, i int) int {
 		}
 	}
 	if j < 0 {
-		for j = i; j >= 0; j-- {
-			fmt.Printf("Debug j %d hotEntry %#v Entry %#v\n", j, cachedEntries[j], cachedEntries[j].EntryPtr)
-		}
+		//for j = i; j >= 0; j-- {
+		//	fmt.Printf("Debug j %d hotEntry %#v Entry %#v\n", j, cachedEntries[j], cachedEntries[j].EntryPtr)
+		//}
 		panic("Can not find previous entry")
 	}
 	return j
@@ -328,9 +326,9 @@ func getNext(cachedEntries []*HotEntry, i int) int {
 		}
 	}
 	if j >= len(cachedEntries) {
-		for j = i; j < len(cachedEntries); j++ {
-			fmt.Printf("Debug j %d hotEntry %#v Entry %#v\n", j, cachedEntries[j], cachedEntries[j].EntryPtr)
-		}
+		//for j = i; j < len(cachedEntries); j++ {
+		//	fmt.Printf("Debug j %d hotEntry %#v Entry %#v\n", j, cachedEntries[j], cachedEntries[j].EntryPtr)
+		//}
 		panic("Can not find next entry")
 	}
 	return j
@@ -391,10 +389,12 @@ func (okv *OnvaKV) update() {
 			// if ptr.SerialNum==-1, then we are deleting a just-inserted value, so ignore it.
 			//fmt.Printf("Now we deactive %d for deletion %#v\n", ptr.SerialNum, ptr)
 			okv.idxTree.Delete(ptr.Key)
+			//okv.meta.DecrActiveEntryCount()
 			okv.DeactiviateEntry(ptr.SerialNum)
 		} else if hotEntry.Operation != types.OpNone || hotEntry.IsTouchedByNext {
 			if ptr.SerialNum >= 0 { // if this entry already exists
 				//fmt.Printf("Now we deactive %d for refresh %#v\n", ptr.SerialNum, ptr)
+				//okv.meta.DecrActiveEntryCount()
 				okv.DeactiviateEntry(ptr.SerialNum)
 			}
 			ptr.LastHeight = ptr.Height
@@ -403,6 +403,7 @@ func (okv *OnvaKV) update() {
 			//fmt.Printf("Now SerialNum = %d for %s(%#v) %#v Entry %#v\n", ptr.SerialNum, string(ptr.Key), ptr.Key, hotEntry, *ptr)
 			okv.meta.IncrMaxSerialNum()
 			pos := okv.datTree.AppendEntry(ptr)
+			//okv.meta.IncrActiveEntryCount()
 			okv.idxTree.Set(ptr.Key, uint64(pos))
 		}
 	}
@@ -415,7 +416,6 @@ func (okv *OnvaKV) DeactiviateEntry(sn int64) {
 		okv.meta.IncrMaxSerialNum()
 		entry := datatree.DummyEntry(sn)
 		okv.datTree.AppendEntry(entry)
-		okv.datTree.DeactiviateEntry(sn)
 	}
 }
 
@@ -437,8 +437,12 @@ func (okv *OnvaKV) CheckConsistency() {
 
 func (okv *OnvaKV) EndWrite() {
 	okv.update()
-	for okv.numOfKeptEntries() > okv.meta.GetActiveEntryCount()*KeptEntriesToActiveEntriesRation &&
-		okv.meta.GetActiveEntryCount() > StartReapThres {
+	//if okv.meta.GetActiveEntryCount() != int64(okv.idxTree.ActiveCount()) - 2 {
+	//	panic(fmt.Sprintf("Fuck meta.GetActiveEntryCount %d okv.idxTree.ActiveCount %d\n", okv.meta.GetActiveEntryCount(), okv.idxTree.ActiveCount()))
+	//}
+	//fmt.Printf("numOfKeptEntries %d GetActiveEntryCount %d x3 %d\n", okv.numOfKeptEntries(), okv.meta.GetActiveEntryCount(), okv.meta.GetActiveEntryCount()*3)
+	for okv.numOfKeptEntries() > int64(okv.idxTree.ActiveCount())*KeptEntriesToActiveEntriesRation &&
+		int64(okv.idxTree.ActiveCount()) > StartReapThres {
 		twigID := okv.meta.GetOldestActiveTwigID()
 		entries := okv.datTree.GetActiveEntriesInTwig(twigID)
 		for _, e := range entries {

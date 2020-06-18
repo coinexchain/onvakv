@@ -14,9 +14,11 @@ import (
 	storetypes "github.com/coinexchain/onvakv/store/types"
 )
 
+//TODO PruneBeforeHeight, GetActiveEntriesInTwig&DeactiviateEntry (in EndWrite), large pendingDeactCount in DeactiviateEntry
+
 const (
 	RootType = "MockDataTree" //MockRoot MockDataTree Real
-	FirstByteOfCacheableKey = byte(8)
+	FirstByteOfCacheableKey = byte(15)
 )
 
 var (
@@ -44,7 +46,7 @@ func runTest() {
 		okv := onvakv.NewOnvaKV4Mock()
 		okv.InitGuards(GuardStart, GuardEnd)
 		root = store.NewRootStore(okv, nil, func(k []byte) bool {
-			return k[0] == FirstByteOfCacheableKey
+			return (k[0]&FirstByteOfCacheableKey) == FirstByteOfCacheableKey
 		})
 	}
 	ref := NewRefStore()
@@ -69,6 +71,7 @@ func runTest() {
 		ExecuteBlock(i, root, &block, rs, cfg, false) //not in parrallel
 		//ExecuteBlock(i, root, &block, rs, cfg, true) //in parrallel
 	}
+	root.Close()
 	if RootType == "MockDataTree" {
 		os.RemoveAll("./rocksdb.db")
 	}
