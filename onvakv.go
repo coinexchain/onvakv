@@ -19,7 +19,7 @@ import (
 const (
 	defaultFileSize = 1024*1024*1024
 	StartReapThres int64 = 10000 // 1000 * 1000
-	KeptEntriesToActiveEntriesRation = 3
+	KeptEntriesToActiveEntriesRatio = 3
 )
 
 type OnvaKV struct {
@@ -411,6 +411,7 @@ func (okv *OnvaKV) update() {
 
 func (okv *OnvaKV) DeactiviateEntry(sn int64) {
 	pendingDeactCount := okv.datTree.DeactiviateEntry(sn)
+	if pendingDeactCount!=0 {fmt.Printf("Here pendingDeactCount %d\n", pendingDeactCount)}
 	if pendingDeactCount > datatree.DeactivedSNListMaxLen {
 		sn := okv.meta.GetMaxSerialNum()
 		okv.meta.IncrMaxSerialNum()
@@ -441,7 +442,7 @@ func (okv *OnvaKV) EndWrite() {
 	//	panic(fmt.Sprintf("Fuck meta.GetActiveEntryCount %d okv.idxTree.ActiveCount %d\n", okv.meta.GetActiveEntryCount(), okv.idxTree.ActiveCount()))
 	//}
 	//fmt.Printf("numOfKeptEntries %d GetActiveEntryCount %d x3 %d\n", okv.numOfKeptEntries(), okv.meta.GetActiveEntryCount(), okv.meta.GetActiveEntryCount()*3)
-	for okv.numOfKeptEntries() > int64(okv.idxTree.ActiveCount())*KeptEntriesToActiveEntriesRation &&
+	for okv.numOfKeptEntries() > int64(okv.idxTree.ActiveCount())*KeptEntriesToActiveEntriesRatio &&
 		int64(okv.idxTree.ActiveCount()) > StartReapThres {
 		twigID := okv.meta.GetOldestActiveTwigID()
 		entries := okv.datTree.GetActiveEntriesInTwig(twigID)

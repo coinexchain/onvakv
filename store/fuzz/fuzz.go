@@ -17,7 +17,7 @@ import (
 //TODO PruneBeforeHeight, GetActiveEntriesInTwig&DeactiviateEntry (in EndWrite), large pendingDeactCount in DeactiviateEntry
 
 const (
-	RootType = "MockDataTree" //MockRoot MockDataTree Real
+	RootType = "Real" //MockRoot MockDataTree Real
 	FirstByteOfCacheableKey = byte(15)
 )
 
@@ -48,6 +48,15 @@ func runTest() {
 		root = store.NewRootStore(okv, nil, func(k []byte) bool {
 			return (k[0]&FirstByteOfCacheableKey) == FirstByteOfCacheableKey
 		})
+	} else {
+		okv, err := onvakv.NewOnvaKV("./onvakv4test", false)
+		if err != nil {
+			panic(err)
+		}
+		okv.InitGuards(GuardStart, GuardEnd)
+		root = store.NewRootStore(okv, nil, func(k []byte) bool {
+			return (k[0]&FirstByteOfCacheableKey) == FirstByteOfCacheableKey
+		})
 	}
 	ref := NewRefStore()
 	fmt.Printf("Initialized\n")
@@ -62,6 +71,7 @@ func runTest() {
 		MaxIterDistance:      16,
 		TxSucceedRatio:       0.85,
 		BlockSucceedRatio:    0.95,
+		DelAfterIterRatio:    0.05,
 	}
 
 	for i := 0; i< roundCount; i++ {
@@ -120,6 +130,7 @@ type FuzzConfig struct {
 	MaxIterDistance      uint32
 	TxSucceedRatio       float32
 	BlockSucceedRatio    float32
+	DelAfterIterRatio    float32
 }
 
 type Pair struct {
@@ -302,18 +313,44 @@ func GenerateRandTx(ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig, touchedK
 			writeCount++
 		}
 		if rs.GetUint32()%4 == 0 && deleteCount < maxDeleteCount {
-			op := Operation{
-				opType: OpDelete,
-				key:    getRand8Bytes(rs, cfg, touchedKeys),
-			}
-			undo := ref.Delete(op.key[:])
-			if tx.Succeed {
-				if DBG {fmt.Printf("MarkDelete %#v\n", op.key[:])}
-				ref.MarkDelete(op.key[:])
+			delIter := tx.Succeed && float32(rs.GetUint32()%0x10000)/float32(0x10000) < cfg.DelAfterIterRatio
+			if delIter {
+				key := getRand8Bytes(rs, cfg, nil)
+				keyEnd := getRand8Bytes(rs, cfg, nil)
+				var iter storetypes.ObjIterator
+				if bytes.Compare(key[:], keyEnd[:]) < 0 {
+					iter = ref.Iterator(key[:], keyEnd[:])
+				} else {
+					iter = ref.ReverseIterator(keyEnd[:], key[:])
+				}
+				for i := uint32(0); i < cfg.MaxIterDistance && iter.Valid(); i++ {
+					_, ok := touchedKeys[binary.LittleEndian.Uint64(iter.Key())]
+					if ok {
+						break
+					}
+					op := Operation{opType: OpDelete}
+					copy(op.key[:], iter.Key())
+					ref.Delete(op.key[:])
+					ref.MarkDelete(op.key[:])
+					if DBG {fmt.Printf("MarkDelete %#v\n", op.key[:])}
+					tx.OpList = append(tx.OpList, op)
+					iter.Next()
+				}
+				iter.Close()
 			} else {
-				undoList = append(undoList, undo)
+				op := Operation{
+					opType: OpDelete,
+					key:    getRand8Bytes(rs, cfg, touchedKeys),
+				}
+				undo := ref.Delete(op.key[:])
+				if tx.Succeed {
+					ref.MarkDelete(op.key[:])
+					if DBG {fmt.Printf("MarkDelete %#v\n", op.key[:])}
+				} else {
+					undoList = append(undoList, undo)
+				}
+				tx.OpList = append(tx.OpList, op)
 			}
-			tx.OpList = append(tx.OpList, op)
 			deleteCount++
 		}
 	}
