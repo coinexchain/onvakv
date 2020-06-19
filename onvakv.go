@@ -34,7 +34,7 @@ type OnvaKV struct {
 	endKey        []byte
 }
 
-func NewOnvaKV4Mock() *OnvaKV {
+func NewOnvaKV4Mock(startEndKeys [][]byte) *OnvaKV {
 	okv := &OnvaKV{k2heMap: &sync.Map{}}
 
 	okv.datTree = datatree.NewMockDataTree()
@@ -48,10 +48,11 @@ func NewOnvaKV4Mock() *OnvaKV {
 
 	okv.meta = metadb.NewMetaDB(okv.rocksdb)
 	okv.rocksdb.OpenNewBatch()
+	okv.InitGuards(startEndKeys[0], startEndKeys[1])
 	return okv
 }
 
-func NewOnvaKV(dirName string, queryHistory bool) (*OnvaKV, error) {
+func NewOnvaKV(dirName string, queryHistory bool, startEndKeys [][]byte) (*OnvaKV, error) {
 	_, err := os.Stat(dirName)
 	dirNotExists := os.IsNotExist(err)
 	okv := &OnvaKV{
@@ -70,7 +71,22 @@ func NewOnvaKV(dirName string, queryHistory bool) (*OnvaKV, error) {
 
 	if dirNotExists { // Create a new database in this dir
 		okv.datTree = datatree.NewEmptyTree(defaultFileSize, dirName)
+		if queryHistory {
+			okv.idxTree = indextree.NewNVTreeMem(okv.rocksdb)
+		} else {
+			okv.idxTree = indextree.NewNVTreeMem(nil)
+		}
+		okv.rocksdb.OpenNewBatch()
 		okv.meta.Init()
+		for i := 0; i < 2048; i++ {
+			sn := okv.meta.GetMaxSerialNum()
+			okv.meta.IncrMaxSerialNum()
+			entry := datatree.DummyEntry(sn)
+			okv.datTree.AppendEntry(entry)
+			okv.datTree.DeactiviateEntry(sn)
+		}
+		okv.InitGuards(startEndKeys[0], startEndKeys[1])
+		okv.rocksdb.CloseOldBatch()
 	} else if okv.meta.GetIsRunning() { // OnvaKV is *NOT* closed properly
 		oldestActiveTwigID := okv.meta.GetOldestActiveTwigID()
 		youngestTwigID := okv.meta.GetMaxSerialNum() >> datatree.TwigShift
@@ -82,7 +98,9 @@ func NewOnvaKV(dirName string, queryHistory bool) (*OnvaKV, error) {
 		okv.datTree = datatree.LoadTree(defaultFileSize, dirName)
 	}
 
-	if queryHistory { // use rocksdb to keep the historical index
+	if dirNotExists {
+		//do nothing
+	} else if queryHistory { // use rocksdb to keep the historical index
 		okv.idxTree = indextree.NewNVTreeMem(okv.rocksdb)
 		err = okv.idxTree.Init(nil)
 		if err != nil {
@@ -251,6 +269,7 @@ func makeHintHotEntry(key string) *HotEntry {
 
 func (okv *OnvaKV) getPrevEntry(k []byte) *Entry {
 	iter := okv.idxTree.ReverseIterator([]byte{}, k)
+	defer iter.Close()
 	if !iter.Valid() {
 		panic("The iterator is invalid! Missing a guard node?")
 	}
@@ -411,12 +430,12 @@ func (okv *OnvaKV) update() {
 
 func (okv *OnvaKV) DeactiviateEntry(sn int64) {
 	pendingDeactCount := okv.datTree.DeactiviateEntry(sn)
-	if pendingDeactCount!=0 {fmt.Printf("Here pendingDeactCount %d\n", pendingDeactCount)}
 	if pendingDeactCount > datatree.DeactivedSNListMaxLen {
 		sn := okv.meta.GetMaxSerialNum()
 		okv.meta.IncrMaxSerialNum()
 		entry := datatree.DummyEntry(sn)
 		okv.datTree.AppendEntry(entry)
+		okv.datTree.DeactiviateEntry(sn)
 	}
 }
 
@@ -441,12 +460,13 @@ func (okv *OnvaKV) EndWrite() {
 	//if okv.meta.GetActiveEntryCount() != int64(okv.idxTree.ActiveCount()) - 2 {
 	//	panic(fmt.Sprintf("Fuck meta.GetActiveEntryCount %d okv.idxTree.ActiveCount %d\n", okv.meta.GetActiveEntryCount(), okv.idxTree.ActiveCount()))
 	//}
-	//fmt.Printf("numOfKeptEntries %d GetActiveEntryCount %d x3 %d\n", okv.numOfKeptEntries(), okv.meta.GetActiveEntryCount(), okv.meta.GetActiveEntryCount()*3)
+	//fmt.Printf("numOfKeptEntries %d ActiveCount %d x3 %d\n", okv.numOfKeptEntries(), okv.idxTree.ActiveCount(), okv.idxTree.ActiveCount()*3)
 	for okv.numOfKeptEntries() > int64(okv.idxTree.ActiveCount())*KeptEntriesToActiveEntriesRatio &&
 		int64(okv.idxTree.ActiveCount()) > StartReapThres {
 		twigID := okv.meta.GetOldestActiveTwigID()
 		entries := okv.datTree.GetActiveEntriesInTwig(twigID)
 		for _, e := range entries {
+			if string(e.Key) == "dummy" {panic(fmt.Sprintf("an active entry is dummy %#v", e))}
 			okv.DeactiviateEntry(e.SerialNum)
 			e.SerialNum = okv.meta.GetMaxSerialNum()
 			okv.meta.IncrMaxSerialNum()
@@ -475,25 +495,27 @@ func (okv *OnvaKV) InitGuards(startKey, endKey []byte) {
 	okv.idxTree.BeginWrite(-1)
 	okv.meta.SetCurrHeight(-1)
 
-	pos := okv.datTree.AppendEntry(&Entry{
+	entry := &Entry{
 		Key:        startKey,
 		Value:      []byte{},
 		NextKey:    endKey,
 		Height:     -1,
 		LastHeight: -1,
 		SerialNum:  okv.meta.GetMaxSerialNum(),
-	})
+	}
+	pos := okv.datTree.AppendEntry(entry)
 	okv.meta.IncrMaxSerialNum()
 	okv.idxTree.Set(startKey, uint64(pos))
 
-	pos = okv.datTree.AppendEntry(&Entry{
+	entry = &Entry{
 		Key:        endKey,
 		Value:      []byte{},
 		NextKey:    endKey,
 		Height:     -1,
 		LastHeight: -1,
 		SerialNum:  okv.meta.GetMaxSerialNum(),
-	})
+	}
+	pos = okv.datTree.AppendEntry(entry)
 	okv.meta.IncrMaxSerialNum()
 	okv.idxTree.Set(endKey, uint64(pos))
 

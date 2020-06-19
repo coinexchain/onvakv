@@ -14,8 +14,6 @@ import (
 	storetypes "github.com/coinexchain/onvakv/store/types"
 )
 
-//TODO PruneBeforeHeight, GetActiveEntriesInTwig&DeactiviateEntry (in EndWrite), large pendingDeactCount in DeactiviateEntry
-
 const (
 	RootType = "Real" //MockRoot MockDataTree Real
 	FirstByteOfCacheableKey = byte(15)
@@ -43,20 +41,21 @@ func runTest() {
 		root = store.NewMockRootStore()
 	} else if RootType == "MockDataTree" {
 		os.RemoveAll("./rocksdb.db")
-		okv := onvakv.NewOnvaKV4Mock()
-		okv.InitGuards(GuardStart, GuardEnd)
+		okv := onvakv.NewOnvaKV4Mock([][]byte{GuardStart, GuardEnd})
+		root = store.NewRootStore(okv, nil, func(k []byte) bool {
+			return (k[0]&FirstByteOfCacheableKey) == FirstByteOfCacheableKey
+		})
+	} else if RootType == "Real" {
+		os.RemoveAll("./onvakv4test")
+		okv, err := onvakv.NewOnvaKV("./onvakv4test", false, [][]byte{GuardStart, GuardEnd})
+		if err != nil {
+			panic(err)
+		}
 		root = store.NewRootStore(okv, nil, func(k []byte) bool {
 			return (k[0]&FirstByteOfCacheableKey) == FirstByteOfCacheableKey
 		})
 	} else {
-		okv, err := onvakv.NewOnvaKV("./onvakv4test", false)
-		if err != nil {
-			panic(err)
-		}
-		okv.InitGuards(GuardStart, GuardEnd)
-		root = store.NewRootStore(okv, nil, func(k []byte) bool {
-			return (k[0]&FirstByteOfCacheableKey) == FirstByteOfCacheableKey
-		})
+		panic("Invalid RootType "+RootType)
 	}
 	ref := NewRefStore()
 	fmt.Printf("Initialized\n")
@@ -75,6 +74,7 @@ func runTest() {
 	}
 
 	for i := 0; i< roundCount; i++ {
+		//if i > 66 {DBG = true}
 		fmt.Printf("Block %d\n", i)
 		root.CheckConsistency()
 		block := GenerateRandBlock(i, ref, rs, cfg)
@@ -84,6 +84,8 @@ func runTest() {
 	root.Close()
 	if RootType == "MockDataTree" {
 		os.RemoveAll("./rocksdb.db")
+	} else if RootType == "Real" {
+		os.RemoveAll("./onvakv4test")
 	}
 }
 

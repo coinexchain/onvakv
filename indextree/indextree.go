@@ -1,7 +1,6 @@
 package indextree
 
 import (
-	//"fmt"
 	"bytes"
 	"encoding/binary"
 	"io"
