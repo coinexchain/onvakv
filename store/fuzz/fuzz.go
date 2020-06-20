@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"math/rand"
 	"sync"
 	"strconv"
 
@@ -78,8 +79,8 @@ func runTest() {
 		fmt.Printf("Block %d\n", i)
 		root.CheckConsistency()
 		block := GenerateRandBlock(i, ref, rs, cfg)
-		ExecuteBlock(i, root, &block, rs, cfg, false) //not in parrallel
-		//ExecuteBlock(i, root, &block, rs, cfg, true) //in parrallel
+		//ExecuteBlock(i, root, &block, rs, cfg, false) //not in parrallel
+		ExecuteBlock(i, root, &block, rs, cfg, true) //in parrallel
 	}
 	root.Close()
 	if RootType == "MockDataTree" {
@@ -108,7 +109,7 @@ func (coord *Coord) ToBytes() []byte {
 
 func (coord *Coord) FromBytes(buf []byte) {
 	if len(buf) != 8 {
-		panic("length is not 8")
+		panic(fmt.Sprintf("length is not 8: %#v", buf))
 	}
 	coord.x = binary.LittleEndian.Uint32(buf[:4])
 	coord.y = binary.LittleEndian.Uint32(buf[4:])
@@ -145,6 +146,7 @@ type Operation struct {
 	keyEnd  [8]byte
 	value   []byte
 	results []Pair
+	randNum uint32
 }
 
 type Tx struct {
@@ -250,18 +252,20 @@ func GenerateRandTx(ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig, touchedK
 		if rs.GetUint32()%4 == 0 && readCount < maxReadCount {
 			key := getRand8Bytes(rs, cfg, touchedKeys)
 			tx.OpList = append(tx.OpList, Operation{
-				opType: OpRead,
-				key:    key,
-				value:  ref.Get(key[:]),
+				opType:  OpRead,
+				key:     key,
+				value:   ref.Get(key[:]),
+				randNum: rs.GetUint32(),
 			})
 			readCount++
 		}
 		if rs.GetUint32()%4 == 0 && iterCount < maxIterCount {
 			op := Operation{
-				opType: OpIterate,
-				key:    getRand8Bytes(rs, cfg, nil),
-				keyEnd: getRand8Bytes(rs, cfg, nil),
-				value:  []byte{1}, //make its non-nil, which marks this op as valid
+				opType:  OpIterate,
+				key:     getRand8Bytes(rs, cfg, nil),
+				keyEnd:  getRand8Bytes(rs, cfg, nil),
+				value:   []byte{1}, //make its non-nil, which marks this op as valid
+				randNum: rs.GetUint32(),
 			}
 			var iter storetypes.ObjIterator
 			if bytes.Compare(op.key[:], op.keyEnd[:]) < 0 {
@@ -300,9 +304,10 @@ func GenerateRandTx(ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig, touchedK
 		if rs.GetUint32()%4 == 0 && writeCount < maxWriteCount {
 			v := getRand8Bytes(rs, cfg, nil)
 			op := Operation{
-				opType: OpWrite,
-				key:    getRand8Bytes(rs, cfg, touchedKeys),
-				value:  v[:],
+				opType:  OpWrite,
+				key:     getRand8Bytes(rs, cfg, touchedKeys),
+				value:   v[:],
+				randNum: rs.GetUint32(),
 			}
 			undo := ref.Set(op.key[:], op.value[:])
 			if tx.Succeed {
@@ -331,6 +336,7 @@ func GenerateRandTx(ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig, touchedK
 						break
 					}
 					op := Operation{opType: OpDelete}
+					op.randNum = rs.GetUint32()
 					copy(op.key[:], iter.Key())
 					ref.Delete(op.key[:])
 					ref.MarkDelete(op.key[:])
@@ -341,8 +347,9 @@ func GenerateRandTx(ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig, touchedK
 				iter.Close()
 			} else {
 				op := Operation{
-					opType: OpDelete,
-					key:    getRand8Bytes(rs, cfg, touchedKeys),
+					opType:  OpDelete,
+					key:     getRand8Bytes(rs, cfg, touchedKeys),
+					randNum: rs.GetUint32(),
 				}
 				undo := ref.Delete(op.key[:])
 				if tx.Succeed {
@@ -423,20 +430,20 @@ func GenerateRandBlock(height int, ref *RefStore, rs randsrc.RandSrc, cfg *FuzzC
 	return block
 }
 
-func MyGet(multi *store.MultiStore, rs randsrc.RandSrc, key []byte) []byte {
-	res := MyGetHelper(multi, rs, key)
+func MyGet(multi *store.MultiStore, randNum uint32, key []byte) []byte {
+	res := MyGetHelper(multi, randNum, key)
 	if multi.Has(key) != (len(res) > 0) {
 		panic("Bug in Has")
 	}
 	return res
 }
 
-func MyGetHelper(multi *store.MultiStore, rs randsrc.RandSrc, key []byte) []byte {
+func MyGetHelper(multi *store.MultiStore, randNum uint32, key []byte) []byte {
 	var coord Coord
 	var ptr storetypes.Serializable
 	ptr = &coord
 
-	switch rs.GetUint32()%3 {
+	switch randNum%3 {
 	case 1:
 		return multi.Get(key)
 	case 2:
@@ -456,11 +463,11 @@ func MyGetHelper(multi *store.MultiStore, rs randsrc.RandSrc, key []byte) []byte
 	}
 }
 
-func MySet(multi *store.MultiStore, rs randsrc.RandSrc, key, value []byte) {
+func MySet(multi *store.MultiStore, randNum uint32, key, value []byte) {
 	var coord Coord
 	var ptr storetypes.Serializable
 	ptr = &coord
-	if rs.GetUint32()%2 == 0 {
+	if randNum%2 == 0 {
 		ptr.FromBytes(value)
 		multi.SetObj(key, ptr)
 	} else {
@@ -468,11 +475,11 @@ func MySet(multi *store.MultiStore, rs randsrc.RandSrc, key, value []byte) {
 	}
 }
 
-func MyIterValue(rs randsrc.RandSrc, iter storetypes.ObjIterator) []byte {
+func MyIterValue(randNum int32, iter storetypes.ObjIterator) []byte {
 	var coord Coord
 	var ptr storetypes.Serializable
 	ptr = &coord
-	if rs.GetUint32()%2 == 0 {
+	if randNum%2 == 0 {
 		iter.ObjValue(&ptr)
 		if ptr == nil {
 			return nil
@@ -490,7 +497,7 @@ func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, rs ra
 			fmt.Printf("%#v\n", op)
 		}
 		if op.opType == OpRead {
-			bz := MyGet(multi, rs, op.key[:])
+			bz := MyGet(multi, op.randNum, op.key[:])
 			if !bytes.Equal(op.value[:], bz) {
 				panic(fmt.Sprintf("Error in Get %#v real %#v expected %#v", op.key[:], bz, op.value[:]))
 			}
@@ -503,6 +510,7 @@ func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, rs ra
 				iter = multi.ReverseIterator(op.keyEnd[:], op.key[:])
 			}
 			panicReason := ""
+			rand := rand.New(rand.NewSource(int64(op.randNum)))
 			for _, pair := range op.results {
 				if !iter.Valid() {
 					panicReason = "Iterator Invalid"
@@ -512,7 +520,7 @@ func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, rs ra
 					panicReason = fmt.Sprintf("Key mismatch real %#v expect %#v", iter.Key(), pair.Key)
 					break
 				}
-				if !bytes.Equal(MyIterValue(rs, iter), pair.Value) {
+				if !bytes.Equal(MyIterValue(rand.Int31(), iter), pair.Value) {
 					panicReason = fmt.Sprintf("Value mismatch real %#v expect %#v", iter.Value(), pair.Value)
 					break
 				}
@@ -521,7 +529,7 @@ func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, rs ra
 			}
 			if len(panicReason) == 0 && iter.Valid() && len(op.results) < int(cfg.MaxIterDistance) {
 				panicReason = "Iterator Should be Invalid"
-				if MyIterValue(rs, iter) != nil {
+				if MyIterValue(rand.Int31(), iter) != nil {
 					panicReason = "Iterator Should be Invalid and Value should be nil"
 				}
 			}
@@ -536,7 +544,7 @@ func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, rs ra
 			iter.Close()
 		}
 		if op.opType == OpWrite {
-			MySet(multi, rs, op.key[:], op.value[:])
+			MySet(multi, op.randNum, op.key[:], op.value[:])
 		}
 		if op.opType == OpDelete {
 			multi.Delete(op.key[:])

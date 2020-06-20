@@ -29,13 +29,14 @@ type OnvaKV struct {
 	rocksdb       *indextree.RocksDB
 	rootHash      []byte
 	k2heMap       *sync.Map // key-to-hot-entry map
+	k2nkMap       *sync.Map // key-to-next-key map
 	cachedEntries []*HotEntry
 	startKey      []byte
 	endKey        []byte
 }
 
 func NewOnvaKV4Mock(startEndKeys [][]byte) *OnvaKV {
-	okv := &OnvaKV{k2heMap: &sync.Map{}}
+	okv := &OnvaKV{k2heMap: &sync.Map{}, k2nkMap: &sync.Map{}}
 
 	okv.datTree = datatree.NewMockDataTree()
 	okv.idxTree = indextree.NewMockIndexTree()
@@ -57,6 +58,7 @@ func NewOnvaKV(dirName string, queryHistory bool, startEndKeys [][]byte) (*OnvaK
 	dirNotExists := os.IsNotExist(err)
 	okv := &OnvaKV{
 		k2heMap:      &sync.Map{},
+		k2nkMap:      &sync.Map{},
 		cachedEntries: make([]*HotEntry, 0, 2000),
 	}
 	if dirNotExists {
@@ -130,6 +132,7 @@ func (okv *OnvaKV) Close() {
 	okv.datTree = nil
 	okv.meta = nil
 	okv.k2heMap = nil
+	okv.k2nkMap = nil
 }
 
 type Entry = types.Entry
@@ -165,16 +168,14 @@ func (okv *OnvaKV) PrepareForUpdate(k []byte) {
 	if findIt { // The case of Change
 		//fmt.Printf("In PrepareForUpdate we update\n")
 		entry := okv.datTree.ReadEntry(int64(pos))
-		v, ok  := okv.k2heMap.Load(string(k))
-		if !ok || v == nil {
-			//fmt.Printf("Now we add entry to k2e(findIt): %s(%#v)\n", string(k), k)
-			okv.k2heMap.Store(string(k), &HotEntry{
-				EntryPtr:  entry,
-				Operation: types.OpNone,
-			})
-		}
+		//fmt.Printf("Now we add entry to k2e(findIt): %s(%#v)\n", string(k), k)
+		okv.k2heMap.Store(string(k), &HotEntry{
+			EntryPtr:  entry,
+			Operation: types.OpNone,
+		})
 		return
 	}
+	prevEntry := okv.getPrevEntry(k)
 
 	// The case of Insert
 	//fmt.Printf("Now we add entry to k2e(not-findIt): %s(%#v)\n", string(k), k)
@@ -191,26 +192,14 @@ func (okv *OnvaKV) PrepareForUpdate(k []byte) {
 	})
 
 	//fmt.Printf("In PrepareForUpdate we insert\n")
-	prevEntry := okv.getPrevEntry(k)
 	//fmt.Printf("prevEntry(%#v): %#v\n", k, prevEntry)
-	kStr := string(prevEntry.Key)
-	v, ok  := okv.k2heMap.Load(kStr)
-	if !ok || v == nil {
-		//fmt.Printf("Now we add entry to k2e(prevEntry.Key): %s(%#v)\n", kStr, prevEntry.Key)
-		okv.k2heMap.Store(kStr, &HotEntry{
-			EntryPtr:  prevEntry,
-			Operation: types.OpNone,
-		})
-	}
+	//fmt.Printf("Now we add entry to k2e(prevEntry.Key): %s(%#v)\n", kStr, prevEntry.Key)
+	okv.k2heMap.Store(string(prevEntry.Key), &HotEntry{
+		EntryPtr:  prevEntry,
+		Operation: types.OpNone,
+	})
 
-	kStr = string(prevEntry.NextKey)
-	_, ok = okv.k2heMap.Load(kStr)
-	if !ok {
-		//fmt.Printf("Now we add entry to k2e(prevEntry.NextKey): %s(%#v)\n", kStr, prevEntry.NextKey)
-		okv.k2heMap.Store(kStr, nil) // we do not need next entry's value, so here we store nil
-	} else {
-		//fmt.Printf("Now we hit k2heMap: %s(%#v)\n", kStr, prevEntry.NextKey)
-	}
+	okv.k2nkMap.Store(string(prevEntry.NextKey), nil)
 }
 
 func (okv *OnvaKV) PrepareForDeletion(k []byte) (findIt bool) {
@@ -221,31 +210,20 @@ func (okv *OnvaKV) PrepareForDeletion(k []byte) (findIt bool) {
 	}
 
 	entry := okv.datTree.ReadEntry(int64(pos))
-	//fmt.Printf("In PrepareForDeletion we read: %#v\n", entry)
-	kStr := string(entry.Key)
-	v, ok := okv.k2heMap.Load(kStr)
-	if !ok || v == nil {
-		okv.k2heMap.Store(kStr, &HotEntry{
-			EntryPtr:  entry,
-			Operation: types.OpNone,
-		})
-	}
-
 	prevEntry := okv.getPrevEntry(k)
-	kStr = string(prevEntry.Key)
-	v, ok = okv.k2heMap.Load(kStr)
-	if !ok || v == nil {
-		okv.k2heMap.Store(kStr, &HotEntry{
-			EntryPtr:  prevEntry,
-			Operation: types.OpNone,
-		})
-	}
 
-	kStr = string(entry.NextKey)
-	_, ok = okv.k2heMap.Load(kStr)
-	if !ok {
-		okv.k2heMap.Store(kStr, nil) // we do not need next entry's value, so here we store nil
-	}
+	//fmt.Printf("In PrepareForDeletion we read: %#v\n", entry)
+	okv.k2heMap.Store(string(entry.Key), &HotEntry{
+		EntryPtr:  entry,
+		Operation: types.OpNone,
+	})
+
+	okv.k2heMap.Store(string(prevEntry.Key), &HotEntry{
+		EntryPtr:  prevEntry,
+		Operation: types.OpNone,
+	})
+
+	okv.k2nkMap.Store(string(entry.NextKey), nil) // we do not need next entry's value, so here we store nil
 	return
 }
 
@@ -355,13 +333,16 @@ func getNext(cachedEntries []*HotEntry, i int) int {
 
 func (okv *OnvaKV) update() {
 	okv.k2heMap.Range(func(key, value interface{}) bool {
-		if value == nil {
-			keyStr := key.(string)
+		hotEntry := value.(*HotEntry)
+		//fmt.Printf("HERE key: %#v HotEntry: %#v Entry: %#v\n", []byte(key.(string)), hotEntry, *(hotEntry.EntryPtr))
+		okv.cachedEntries = append(okv.cachedEntries, hotEntry)
+		return true
+	})
+	okv.k2nkMap.Range(func(key, value interface{}) bool {
+		kStr := key.(string)
+		if _, ok := okv.k2heMap.Load(kStr); !ok {
+			keyStr := kStr
 		        okv.cachedEntries = append(okv.cachedEntries, makeHintHotEntry(keyStr))
-		} else {
-			hotEntry := value.(*HotEntry)
-			//fmt.Printf("HERE key: %#v HotEntry: %#v Entry: %#v\n", []byte(key.(string)), hotEntry, *(hotEntry.EntryPtr))
-		        okv.cachedEntries = append(okv.cachedEntries, hotEntry)
 		}
 		return true
 	})
@@ -479,6 +460,7 @@ func (okv *OnvaKV) EndWrite() {
 	root := okv.datTree.EndBlock()
 	okv.rootHash = root
 	okv.k2heMap = &sync.Map{} // clear content
+	okv.k2nkMap = &sync.Map{} // clear content
 	okv.cachedEntries = okv.cachedEntries[:0] // clear content
 
 	eS, tS := okv.datTree.GetFileSizes()

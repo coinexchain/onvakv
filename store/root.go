@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"reflect"
+	"sync"
 
 	dbm "github.com/tendermint/tm-db"
 
@@ -14,6 +15,7 @@ const CacheSizeLimit = 1024 * 1024
 
 type RootStore struct {
 	cache          map[string]types.Serializable
+	cacheBuf       *sync.Map
 	isCacheableKey func(k []byte) bool
 	okv            *onvakv.OnvaKV
 	height         int64
@@ -25,6 +27,7 @@ var _ types.RootStoreI = &RootStore{}
 func NewRootStore(okv *onvakv.OnvaKV, storeKeys map[types.StoreKey]struct{}, isCacheableKey func(k []byte) bool) *RootStore {
 	return &RootStore{
 		cache:          make(map[string]types.Serializable),
+		cacheBuf:       &sync.Map{},
 		isCacheableKey: isCacheableKey,
 		okv:            okv,
 		height:         -1,
@@ -55,7 +58,7 @@ func (root *RootStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
 	} else if bz := root.Get(key); bz != nil {
 		(*ptr).FromBytes(bz)
 		if root.isCacheableKey(key) {
-			root.addToCache(key, *ptr)
+			root.cacheBuf.Store(string(key), *ptr)
 		}
 	} else {
 		*ptr = nil
@@ -102,6 +105,11 @@ func (root *RootStore) BeginWrite() {
 		panic(fmt.Sprintf("Height is not initialized: %", root.height))
 	}
 	root.okv.BeginWrite(root.height)
+	root.cacheBuf.Range(func(key, value interface{}) bool {
+		root.addToCache([]byte(key.(string)), value.(types.Serializable))
+		return true
+	})
+	root.cacheBuf = nil
 }
 
 func (root *RootStore) Set(key, value []byte) {
@@ -129,6 +137,7 @@ func (root *RootStore) Delete(key []byte) {
 
 func (root *RootStore) EndWrite() {
 	root.okv.EndWrite()
+	root.cacheBuf = &sync.Map{}
 }
 
 func (root *RootStore) CheckConsistency() {
