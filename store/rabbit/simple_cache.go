@@ -15,11 +15,12 @@ const (
 )
 
 type CachedValue struct {
-	isEmpty   bool
 	passbyNum uint64
 	key       []byte
 	obj       interface{}
+	isEmpty   bool
 	isDeleted bool
+	isDirty   bool
 }
 
 func (v *CachedValue) ToBytes() []byte {
@@ -74,8 +75,11 @@ func NewSimpleCacheStore() *SimpleCacheStore {
 
 func (scs *SimpleCacheStore) ScanAllEntries(fn func(key, value []byte, isDeleted bool)) {
 	for key, cv := range scs.m {
-		if cv.obj == nil {
+		if cv.obj == nil && !cv.isDeleted && !cv.isEmpty {
 			panic(fmt.Sprintf("Dangling Cache Entry for %s(%v) %#v", string(key[:]), key, cv))
+		}
+		if !cv.isDirty {
+			continue
 		}
 		fn(key[:], cv.ToBytes(), cv.isDeleted)
 	}

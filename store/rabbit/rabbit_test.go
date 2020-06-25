@@ -14,7 +14,7 @@ import (
 
 // go test -c -coverpkg github.com/coinexchain/onvakv/store/rabbit .
 
-// RANDFILE=~/Downloads/goland-2019.1.3.dmg RANDCOUNT=1000 ./fuzz.test 
+// RANDFILE=~/Downloads/goland-2019.1.3.dmg RANDCOUNT=10000 ./rabbit.test 
 
 
 const KeyLen = 16
@@ -46,16 +46,6 @@ func FuzzModify(cfg *FuzzConfig, rs randsrc.RandSrc, refMap map[[KeyLen]byte][]b
 		toBeSkipped = 0
 	}
 
-	//keyList := make([][KeyLen]byte, 0, len(refMap))
-	//for k := range refMap {
-	//	keyList = append(keyList, k)
-	//}
-	//sort.Slice(keyList, func(i, j int) bool {
-	//	return bytes.Compare(keyList[i][:], keyList[j][:]) < 0
-	//})
-	//for _, k := range keyList {
-	//	v := refMap[k]
-
 	for k, v := range refMap {
 		if skippedEntries < toBeSkipped {
 			skippedEntries++
@@ -66,7 +56,8 @@ func FuzzModify(cfg *FuzzConfig, rs randsrc.RandSrc, refMap map[[KeyLen]byte][]b
 			fmt.Printf("k:%v rV:%v v:%v\n", k[:], rV, v)
 			panic("Compare Error")
 		}
-		if rs.GetUint64() % 2 == 0 { //delete
+		switch rs.GetUint64() % 3 {
+		case 0: //delete
 			rbt.Delete(k[:])
 			delete(refMap, k)
 			ok := rbt.Has(k[:])
@@ -74,7 +65,18 @@ func FuzzModify(cfg *FuzzConfig, rs randsrc.RandSrc, refMap map[[KeyLen]byte][]b
 				fmt.Printf("The deleted entry %v\n", k[:])
 				panic("Why? it was deleted...")
 			}
-		} else { //change
+		case 1: //change
+			newV := rs.GetBytes(ValueLen)
+			refMap[k] = newV
+			rbt.Set(k[:], newV)
+		case 2: //delete and change
+			rbt.Delete(k[:])
+			delete(refMap, k)
+			ok := rbt.Has(k[:])
+			if ok {
+				fmt.Printf("The deleted entry %v\n", k[:])
+				panic("Why? it was deleted...")
+			}
 			newV := rs.GetBytes(ValueLen)
 			refMap[k] = newV
 			rbt.Set(k[:], newV)

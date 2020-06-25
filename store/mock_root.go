@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/coinexchain/onvakv/store/types"
@@ -90,7 +91,7 @@ func (rs *MockRootStore) BeginWrite() {
 func (rs *MockRootStore) Set(key, value []byte) {
 	if !rs.isWritting {panic("notWritting")}
 	if _, ok := rs.preparedForUpdate.Load(string(key)); !ok {
-		panic("not prepared")
+		panic(fmt.Sprintf("not prepared %#v", key))
 	}
 	rs.cacheStore.Set(key, value)
 }

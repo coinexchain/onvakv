@@ -2,6 +2,7 @@ package rabbit
 
 import (
 	"bytes"
+	"fmt"
 
 	sha256 "github.com/minio/sha256-simd"
 
@@ -10,7 +11,7 @@ import (
 )
 
 const (
-	KeySize = 8 // 2 for fuzz, 8 for production
+	KeySize = 2 // 2 for fuzz, 8 for production
 
 	NotFount = 0
 	EmptySlot = 1
@@ -62,6 +63,10 @@ func (rabbit RabbitStore) getObjHelper(readonly bool, key []byte, ptr *types.Ser
 	cv, _, status := rabbit.find(key, true)
 	if status != Exists {
 		*ptr = nil
+		return
+	}
+	if cv.obj == nil {
+		panic(fmt.Sprintf("Reading a dangling value %#v\n", cv))
 	}
 	if bz, ok := cv.obj.([]byte); ok {
 		(*ptr).FromBytes(bz)
@@ -79,7 +84,7 @@ func (rabbit RabbitStore) find(key []byte, earlyExit bool) (cv *CachedValue, pat
 	status = NotFount
 	for i := 0; i < MaxFindDepth; i++ {
 		copy(k[:], hash[:])
-		k[0] = k[0] | 0x1
+		k[0] = k[0] | 0x1 // force the MSB to 1
 		path = append(path, k)
 		cv = rabbit.sms.GetCachedValue(k)
 		if cv == nil {
@@ -97,7 +102,7 @@ func (rabbit RabbitStore) find(key []byte, earlyExit bool) (cv *CachedValue, pat
 			hash = sha256.Sum256(hash[:])
 		}
 	}
-	panic("MaxFindDepth reached!")
+	panic(fmt.Sprintf("MaxFindDepth(%d) reached!", MaxFindDepth))
 }
 
 func (rabbit RabbitStore) Set(key []byte, bz []byte) {
@@ -118,7 +123,7 @@ func (rabbit RabbitStore) setHelper(key []byte, obj interface{}) {
 	}
 	if status == EmptySlot { //overwrite
 		cv := rabbit.sms.MustGetCachedValue(path[len(path)-1])
-		cv.key = append([]byte{}, key...)
+		cv.key = append([]byte{}, key...) //TODO
 		cv.obj = obj
 		cv.isEmpty = false
 		rabbit.sms.SetCachedValue(path[len(path)-1], cv)

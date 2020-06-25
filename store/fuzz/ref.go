@@ -24,6 +24,10 @@ func NewRefStore() *RefStore {
 	}
 }
 
+func (rs *RefStore) Size() int {
+	return rs.cs.Size()
+}
+
 func (rs *RefStore) Clone() *RefStore {
 	newStore := NewRefStore()
 	if len(rs.tobeDel) != 0 {panic("none-zero tobeDel")}

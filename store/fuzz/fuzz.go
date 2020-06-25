@@ -70,8 +70,8 @@ func runTest(cfg *FuzzConfig) {
 		fmt.Printf("Block %d\n", i)
 		root.CheckConsistency()
 		block := GenerateRandBlock(i, ref, rs, cfg)
-		//ExecuteBlock(i, root, &block, rs, cfg, false) //not in parrallel
-		ExecuteBlock(i, root, &block, rs, cfg, true) //in parrallel
+		ExecuteBlock(i, root, &block, rs, cfg, false) //not in parrallel
+		//ExecuteBlock(i, root, &block, rs, cfg, true) //in parrallel
 	}
 	root.Close()
 	if cfg.RootType == "MockDataTree" {
@@ -122,6 +122,7 @@ type FuzzConfig struct {
 	MaxEpochCountInBlock uint32
 	EffectiveBits        uint32
 	MaxIterDistance      uint32
+	MaxActiveCount       int
 	TxSucceedRatio       float32
 	BlockSucceedRatio    float32
 	DelAfterIterRatio    float32
@@ -229,10 +230,13 @@ func RecheckIter(ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig, tx *Tx) {
 
 func GenerateRandTx(ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig, touchedKeys map[uint64]struct{}) *Tx {
 	readCount, iterCount, writeCount, deleteCount := uint32(0), uint32(0), uint32(0), uint32(0)
-	maxReadCount := rs.GetUint32()%cfg.MaxReadCountInTx
-	maxIterCount := rs.GetUint32()%cfg.MaxIterCountInTx
-	maxWriteCount := rs.GetUint32()%cfg.MaxWriteCountInTx
-	maxDeleteCount := rs.GetUint32()%cfg.MaxDeleteCountInTx
+	maxReadCount := rs.GetUint32()%(cfg.MaxReadCountInTx+1)
+	maxIterCount := rs.GetUint32()%(cfg.MaxIterCountInTx+1)
+	maxWriteCount := rs.GetUint32()%(cfg.MaxWriteCountInTx+1)
+	if cfg.MaxActiveCount > 0 && ref.Size() > cfg.MaxActiveCount {
+		maxWriteCount = 0
+	}
+	maxDeleteCount := rs.GetUint32()%(cfg.MaxDeleteCountInTx+1)
 	tx := Tx{
 		OpList: make([]Operation, 0, maxReadCount+maxWriteCount+maxDeleteCount),
 		Succeed: float32(rs.GetUint32()%0x10000)/float32(0x10000) < cfg.TxSucceedRatio,
@@ -381,7 +385,7 @@ func GenerateRandEpoch(height, epochNum int, ref *RefStore, rs randsrc.RandSrc, 
 	keyCountEstimated := cfg.MaxTxCountInEpoch*(cfg.MaxReadCountInTx+cfg.MaxIterCountInTx*cfg.MaxIterDistance*2+
 		cfg.MaxWriteCountInTx+cfg.MaxDeleteCountInTx)/2
 	touchedKeys := make(map[uint64]struct{}, keyCountEstimated)
-	txCount := rs.GetUint32()%cfg.MaxTxCountInEpoch
+	txCount := rs.GetUint32()%(cfg.MaxTxCountInEpoch+1)
 	epoch := Epoch{TxList: make([]*Tx, int(txCount))}
 	for i := range epoch.TxList {
 		tx := GenerateRandTx(ref, rs, cfg, touchedKeys)
@@ -410,7 +414,7 @@ func GenerateRandEpoch(height, epochNum int, ref *RefStore, rs randsrc.RandSrc, 
 }
 
 func GenerateRandBlock(height int, ref *RefStore, rs randsrc.RandSrc, cfg *FuzzConfig) Block {
-	epochCount := rs.GetUint32()%cfg.MaxEpochCountInBlock
+	epochCount := rs.GetUint32()%(cfg.MaxEpochCountInBlock+1)
 	block := Block{EpochList: make([]Epoch, epochCount)}
 	block.Succeed = float32(rs.GetUint32()%0x10000)/float32(0x10000) < cfg.BlockSucceedRatio
 	if !block.Succeed {
@@ -563,9 +567,9 @@ func ExecuteBlock(height int, root storetypes.RootStoreI, block *Block, rs rands
 		var wg sync.WaitGroup
 		for j, tx := range epoch.TxList {
 			if cfg.TestRabbit {
-				dbList[j] = trunk.Cached()
-			} else {
 				dbList[j] = rabbit.NewRabbitStore(trunk)
+			} else {
+				dbList[j] = trunk.Cached()
 			}
 			if DBG {fmt.Printf("Check h:%d (%v) epoch %d tx %d (%v) of %d\n", height, block.Succeed, i, j, tx.Succeed, len(epoch.TxList))}
 			if inParallel {
