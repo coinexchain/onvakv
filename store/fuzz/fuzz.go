@@ -12,11 +12,11 @@ import (
 	"github.com/coinexchain/randsrc"
 	"github.com/coinexchain/onvakv"
 	"github.com/coinexchain/onvakv/store"
+	"github.com/coinexchain/onvakv/store/rabbit"
 	storetypes "github.com/coinexchain/onvakv/store/types"
 )
 
 const (
-	RootType = "Real" //MockRoot MockDataTree Real
 	FirstByteOfCacheableKey = byte(15)
 )
 
@@ -28,9 +28,13 @@ var (
 
 var DBG bool
 
-func runTest() {
+func runTest(cfg *FuzzConfig) {
 	DBG = false
 	randFilename := os.Getenv("RANDFILE")
+	if len(randFilename) == 0 {
+		fmt.Printf("No RANDFILE specified. Exiting...")
+		return
+	}
 	roundCount, err := strconv.Atoi(os.Getenv("RANDCOUNT"))
 	if err != nil {
 		panic(err)
@@ -38,15 +42,15 @@ func runTest() {
 
 	rs := randsrc.NewRandSrcFromFileWithSeed(randFilename, []byte{0})
 	var root storetypes.RootStoreI
-	if RootType == "MockRoot" {
+	if cfg.RootType == "MockRoot" {
 		root = store.NewMockRootStore()
-	} else if RootType == "MockDataTree" {
+	} else if cfg.RootType == "MockDataTree" {
 		os.RemoveAll("./rocksdb.db")
 		okv := onvakv.NewOnvaKV4Mock([][]byte{GuardStart, GuardEnd})
 		root = store.NewRootStore(okv, nil, func(k []byte) bool {
 			return (k[0]&FirstByteOfCacheableKey) == FirstByteOfCacheableKey
 		})
-	} else if RootType == "Real" {
+	} else if cfg.RootType == "Real" {
 		os.RemoveAll("./onvakv4test")
 		okv, err := onvakv.NewOnvaKV("./onvakv4test", false, [][]byte{GuardStart, GuardEnd})
 		if err != nil {
@@ -56,23 +60,10 @@ func runTest() {
 			return (k[0]&FirstByteOfCacheableKey) == FirstByteOfCacheableKey
 		})
 	} else {
-		panic("Invalid RootType "+RootType)
+		panic("Invalid RootType "+cfg.RootType)
 	}
 	ref := NewRefStore()
 	fmt.Printf("Initialized\n")
-	cfg := &FuzzConfig {
-		MaxReadCountInTx:     10,
-		MaxIterCountInTx:     5,
-		MaxWriteCountInTx:    10,
-		MaxDeleteCountInTx:   10,
-		MaxTxCountInEpoch:    100,
-		MaxEpochCountInBlock: 5,
-		EffectiveBits:        16,
-		MaxIterDistance:      16,
-		TxSucceedRatio:       0.85,
-		BlockSucceedRatio:    0.95,
-		DelAfterIterRatio:    0.05,
-	}
 
 	for i := 0; i< roundCount; i++ {
 		//if i > 66 {DBG = true}
@@ -83,9 +74,9 @@ func runTest() {
 		ExecuteBlock(i, root, &block, rs, cfg, true) //in parrallel
 	}
 	root.Close()
-	if RootType == "MockDataTree" {
+	if cfg.RootType == "MockDataTree" {
 		os.RemoveAll("./rocksdb.db")
-	} else if RootType == "Real" {
+	} else if cfg.RootType == "Real" {
 		os.RemoveAll("./onvakv4test")
 	}
 }
@@ -134,6 +125,8 @@ type FuzzConfig struct {
 	TxSucceedRatio       float32
 	BlockSucceedRatio    float32
 	DelAfterIterRatio    float32
+	RootType             string //MockRoot MockDataTree Real
+	TestRabbit           bool
 }
 
 type Pair struct {
@@ -430,7 +423,7 @@ func GenerateRandBlock(height int, ref *RefStore, rs randsrc.RandSrc, cfg *FuzzC
 	return block
 }
 
-func MyGet(multi *store.MultiStore, randNum uint32, key []byte) []byte {
+func MyGet(multi storetypes.MultiStoreI, randNum uint32, key []byte) []byte {
 	res := MyGetHelper(multi, randNum, key)
 	if multi.Has(key) != (len(res) > 0) {
 		panic("Bug in Has")
@@ -438,7 +431,7 @@ func MyGet(multi *store.MultiStore, randNum uint32, key []byte) []byte {
 	return res
 }
 
-func MyGetHelper(multi *store.MultiStore, randNum uint32, key []byte) []byte {
+func MyGetHelper(multi storetypes.MultiStoreI, randNum uint32, key []byte) []byte {
 	var coord Coord
 	var ptr storetypes.Serializable
 	ptr = &coord
@@ -463,7 +456,7 @@ func MyGetHelper(multi *store.MultiStore, randNum uint32, key []byte) []byte {
 	}
 }
 
-func MySet(multi *store.MultiStore, randNum uint32, key, value []byte) {
+func MySet(multi storetypes.MultiStoreI, randNum uint32, key, value []byte) {
 	var coord Coord
 	var ptr storetypes.Serializable
 	ptr = &coord
@@ -490,7 +483,7 @@ func MyIterValue(randNum int32, iter storetypes.ObjIterator) []byte {
 	}
 }
 
-func CheckTx(height, epochNum, txNum int, multi *store.MultiStore, tx *Tx, rs randsrc.RandSrc, cfg *FuzzConfig, blkSuc bool) {
+func CheckTx(height, epochNum, txNum int, multi storetypes.MultiStoreI, tx *Tx, rs randsrc.RandSrc, cfg *FuzzConfig, blkSuc bool) {
 	for i, op := range tx.OpList {
 		if DBG {
 			fmt.Printf("Check %d-%d (%v) tx %d (%v) operation %d of %d\n", height, epochNum, blkSuc, txNum,  tx.Succeed, i, len(tx.OpList))
@@ -566,10 +559,14 @@ func ExecuteBlock(height int, root storetypes.RootStoreI, block *Block, rs rands
 	trunk := root.GetTrunkStore().(*store.TrunkStore)
 	for i, epoch := range block.EpochList {
 		if DBG {fmt.Printf("Check h:%d (%v) epoch %d of %d\n", height, block.Succeed, i, len(block.EpochList))}
-		dbList := make([]*store.MultiStore, len(epoch.TxList))
+		dbList := make([]storetypes.MultiStoreI, len(epoch.TxList))
 		var wg sync.WaitGroup
 		for j, tx := range epoch.TxList {
-			dbList[j] = trunk.Cached()
+			if cfg.TestRabbit {
+				dbList[j] = trunk.Cached()
+			} else {
+				dbList[j] = rabbit.NewRabbitStore(trunk)
+			}
 			if DBG {fmt.Printf("Check h:%d (%v) epoch %d tx %d (%v) of %d\n", height, block.Succeed, i, j, tx.Succeed, len(epoch.TxList))}
 			if inParallel {
 				wg.Add(1)

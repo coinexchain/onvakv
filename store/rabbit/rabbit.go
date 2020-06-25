@@ -3,8 +3,10 @@ package rabbit
 import (
 	"bytes"
 
-	"github.com/coinexchain/onvakv/store/types"
 	sha256 "github.com/minio/sha256-simd"
+
+	"github.com/coinexchain/onvakv/store"
+	"github.com/coinexchain/onvakv/store/types"
 )
 
 const (
@@ -21,7 +23,42 @@ type RabbitStore struct {
 	sms SimpleMultiStore
 }
 
-func (rabbit *RabbitStore) GetObj(key []byte, ptr *types.Serializable) {
+func NewRabbitStore(trunk *store.TrunkStore) (rabbit RabbitStore) {
+	rabbit.sms = SimpleMultiStore{
+		cache: NewSimpleCacheStore(),
+		trunk: trunk,
+	}
+	return
+}
+
+var _ types.MultiStoreI = &RabbitStore{}
+
+func (rabbit RabbitStore) Has(key []byte) bool {
+	_, _, status := rabbit.find(key, true)
+	return status == Exists
+}
+
+func (rabbit RabbitStore) Get(key []byte) []byte {
+	cv, _, status := rabbit.find(key, true)
+	if status != Exists {
+		return nil
+	}
+	if bz, ok := cv.obj.([]byte); ok {
+		return append([]byte{}, bz...)
+	} else {
+		return cv.obj.(types.Serializable).ToBytes()
+	}
+}
+
+func (rabbit RabbitStore) GetObj(key []byte, ptr *types.Serializable) {
+	rabbit.getObjHelper(false, key, ptr)
+}
+
+func (rabbit RabbitStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
+	rabbit.getObjHelper(true, key, ptr)
+}
+
+func (rabbit RabbitStore) getObjHelper(readonly bool, key []byte, ptr *types.Serializable) {
 	cv, _, status := rabbit.find(key, true)
 	if status != Exists {
 		*ptr = nil
@@ -31,11 +68,12 @@ func (rabbit *RabbitStore) GetObj(key []byte, ptr *types.Serializable) {
 	} else {
 		*ptr = cv.obj.(types.Serializable)
 	}
-	cv.obj = nil
-
+	if !readonly {
+		cv.obj = nil
+	}
 }
 
-func (rabbit *RabbitStore) find(key []byte, earlyExit bool) (cv *CachedValue, path [][KeySize]byte, status int) {
+func (rabbit RabbitStore) find(key []byte, earlyExit bool) (cv *CachedValue, path [][KeySize]byte, status int) {
 	var k [KeySize]byte
 	hash := sha256.Sum256(key)
 	status = NotFount
@@ -62,7 +100,15 @@ func (rabbit *RabbitStore) find(key []byte, earlyExit bool) (cv *CachedValue, pa
 	panic("MaxFindDepth reached!")
 }
 
-func (rabbit *RabbitStore) SetObj(key []byte, obj types.Serializable) {
+func (rabbit RabbitStore) Set(key []byte, bz []byte) {
+	rabbit.setHelper(key, bz)
+}
+
+func (rabbit RabbitStore) SetObj(key []byte, obj types.Serializable) {
+	rabbit.setHelper(key, obj)
+}
+
+func (rabbit RabbitStore) setHelper(key []byte, obj interface{}) {
 	_, path, status := rabbit.find(key, false)
 	if status == Exists { //change
 		cv := rabbit.sms.MustGetCachedValue(path[len(path)-1])
@@ -92,7 +138,7 @@ func (rabbit *RabbitStore) SetObj(key []byte, obj types.Serializable) {
 	}
 }
 
-func (rabbit *RabbitStore) Delete(key []byte) {
+func (rabbit RabbitStore) Delete(key []byte) {
 	_, path, status := rabbit.find(key, true)
 	if status != Exists {
 		return
@@ -114,4 +160,19 @@ func (rabbit *RabbitStore) Delete(key []byte) {
 	}
 }
 
+func (rabbit RabbitStore) Close(writeBack bool) {
+	rabbit.sms.Close(writeBack)
+}
+
+func (rabbit RabbitStore) ActiveCount() int {
+	return rabbit.sms.trunk.ActiveCount()
+}
+
+func (rabbit RabbitStore) Iterator(start, end []byte) types.ObjIterator {
+	panic("Not Implemented")
+}
+
+func (rabbit RabbitStore) ReverseIterator(start, end []byte) types.ObjIterator {
+	panic("Not Implemented")
+}
 

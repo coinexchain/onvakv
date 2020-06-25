@@ -20,6 +20,10 @@ func NewCacheStore() *CacheStore {
 	}
 }
 
+func (cs *CacheStore) Size() int {
+	return cs.bt.Len()
+}
+
 func (cs *CacheStore) Close() {
 	cs.bt.Close()
 }

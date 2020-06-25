@@ -436,6 +436,10 @@ func (okv *OnvaKV) CheckConsistency() {
 	}
 }
 
+func (okv *OnvaKV) ActiveCount() int {
+	return okv.idxTree.ActiveCount()
+}
+
 func (okv *OnvaKV) EndWrite() {
 	okv.update()
 	//if okv.meta.GetActiveEntryCount() != int64(okv.idxTree.ActiveCount()) - 2 {

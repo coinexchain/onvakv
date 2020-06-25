@@ -173,6 +173,10 @@ func (root *RootStore) Close() {
 	root.cache = nil
 }
 
+func (root *RootStore) ActiveCount() int {
+	return root.okv.ActiveCount()
+}
+
 type RootStoreIterator struct {
 	root *RootStore
 	iter dbm.Iterator

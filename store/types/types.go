@@ -78,5 +78,18 @@ type RootStoreI interface {
 	EndWrite()
 	CheckConsistency()
 	Close()
+	ActiveCount() int
 }
 
+type MultiStoreI interface {
+	Has(key []byte) bool
+	Get(key []byte) []byte
+	GetObj(key []byte, ptr *Serializable)
+	GetReadOnlyObj(key []byte, ptr *Serializable)
+	Set(key, value []byte)
+	SetObj(key []byte, obj Serializable)
+	Delete(key []byte)
+	Close(writeBack bool)
+	Iterator(start, end []byte) ObjIterator
+	ReverseIterator(start, end []byte) ObjIterator
+}

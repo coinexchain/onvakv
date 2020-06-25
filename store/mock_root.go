@@ -122,3 +122,7 @@ func (rs *MockRootStore) CheckConsistency() {
 
 func (rs *MockRootStore) Close() {
 }
+
+func (rs *MockRootStore) ActiveCount() int {
+	return rs.cacheStore.Size()
+}

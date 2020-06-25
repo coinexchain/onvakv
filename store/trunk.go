@@ -148,3 +148,6 @@ func (ts *TrunkStore) Close(writeBack bool) {
 	ts.root = nil
 }
 
+func (ts *TrunkStore) ActiveCount() int {
+	return ts.root.ActiveCount()
+}
