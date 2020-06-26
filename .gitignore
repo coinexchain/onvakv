@@ -38,3 +38,4 @@ datatree/fuzz/datadir
 *.swl
 *.old
 datatree/a.sh
+store/rabbit/rwbench/rwbench

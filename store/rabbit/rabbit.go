@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	KeySize = 2 // 2 for fuzz, 8 for production
+	KeySize = 8 // 2 for fuzz, 8 for production
 
 	NotFount = 0
 	EmptySlot = 1
@@ -37,6 +37,15 @@ var _ types.MultiStoreI = &RabbitStore{}
 func (rabbit RabbitStore) Has(key []byte) bool {
 	_, _, status := rabbit.find(key, true)
 	return status == Exists
+}
+
+func (rabbit RabbitStore) GetShortKey(key []byte) (shortKey []byte, ok bool) {
+	_, path, status := rabbit.find(key, true)
+	ok = status == Exists
+	if ok {
+		shortKey = append([]byte{}, path[len(path)-1][:]...)
+	}
+	return
 }
 
 func (rabbit RabbitStore) Get(key []byte) []byte {
