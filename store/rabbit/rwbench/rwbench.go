@@ -91,7 +91,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	root := store.NewRootStore(okv, nil, func(k []byte) bool {return false})
+	root := store.NewRootStore(okv, nil, nil)
 
 	if os.Args[1] == "w" {
 		randFilename := os.Args[2]

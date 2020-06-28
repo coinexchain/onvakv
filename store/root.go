@@ -39,23 +39,37 @@ func (root *RootStore) SetHeight(h int64) {
 	root.height = h
 }
 
-func (root *RootStore) Get(key []byte) []byte { //TODO should check root.cache
+func (root *RootStore) Get(key []byte) []byte {
+	ok := false
+	var obj types.Serializable
+	if root.isCacheableKey != nil && root.isCacheableKey(key) {
+		obj, ok = root.cache[string(key)]
+	}
+	if ok {
+		return obj.ToBytes()
+	} else {
+		return root.get(key)
+	}
+}
+
+func (root *RootStore) get(key []byte) []byte {
 	e := root.okv.GetEntry(key)
 	if e == nil {
 		return nil
 	}
 	return e.Value
 }
+
 func (root *RootStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
 	ok := false
 	var obj types.Serializable
-	if root.isCacheableKey(key) {
+	if root.isCacheableKey != nil && root.isCacheableKey(key) {
 		obj, ok = root.cache[string(key)]
 	}
 	if ok {
 		//fmt.Printf("HIT on %#v : %#v\n", key, obj.ToBytes())
 		reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(obj))
-	} else if bz := root.Get(key); bz != nil {
+	} else if bz := root.get(key); bz != nil {
 		(*ptr).FromBytes(bz)
 		if root.isCacheableKey(key) {
 			root.cacheBuf.Store(string(key), *ptr)
@@ -64,17 +78,18 @@ func (root *RootStore) GetReadOnlyObj(key []byte, ptr *types.Serializable) {
 		*ptr = nil
 	}
 }
+
 func (root *RootStore) GetObjCopy(key []byte, ptr *types.Serializable) {
 	ok := false
 	var obj types.Serializable
-	if root.isCacheableKey(key) {
+	if root.isCacheableKey != nil && root.isCacheableKey(key) {
 		obj, ok = root.cache[string(key)]
 	}
 	if ok {
 		//fmt.Printf("HIT on %#v : %#v\n", key, obj.ToBytes())
 		newObj := obj.DeepCopy().(types.Serializable)
 		reflect.ValueOf(ptr).Elem().Set(reflect.ValueOf(newObj))
-	} else if bz := root.Get(key); bz != nil {
+	} else if bz := root.get(key); bz != nil {
 		(*ptr).FromBytes(bz)
 	} else {
 		*ptr = nil
@@ -114,7 +129,7 @@ func (root *RootStore) BeginWrite() {
 
 func (root *RootStore) Set(key, value []byte) {
 	root.okv.Set(key, value)
-	if root.isCacheableKey(key) {
+	if root.isCacheableKey != nil && root.isCacheableKey(key) {
 		_, ok := root.cache[string(key)]
 		if ok {
 			//fmt.Printf("CACHE-UPDATE on %#v : %#v\n", key, value)
@@ -125,7 +140,7 @@ func (root *RootStore) Set(key, value []byte) {
 
 func (root *RootStore) SetObj(key []byte, obj types.Serializable) {
 	root.okv.Set(key, obj.ToBytes())
-	if root.isCacheableKey(key) {
+	if root.isCacheableKey != nil && root.isCacheableKey(key) {
 		root.addToCache(key, obj)
 	}
 }
@@ -201,7 +216,7 @@ func (iter *RootStoreIterator) ObjValue(ptr *types.Serializable) {
 	key := iter.iter.Key()
 	ok := false
 	var obj types.Serializable
-	if iter.root.isCacheableKey(key) {
+	if iter.root.isCacheableKey != nil && iter.root.isCacheableKey(key) {
 		obj, ok = iter.root.cache[string(key)]
 	}
 	if ok {

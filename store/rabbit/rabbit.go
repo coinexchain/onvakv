@@ -39,12 +39,9 @@ func (rabbit RabbitStore) Has(key []byte) bool {
 	return status == Exists
 }
 
-func (rabbit RabbitStore) GetShortKey(key []byte) (shortKey []byte, ok bool) {
+func (rabbit RabbitStore) GetShortKeyPath(key []byte) (path [][KeySize]byte, ok bool) {
 	_, path, status := rabbit.find(key, true)
 	ok = status == Exists
-	if ok {
-		shortKey = append([]byte{}, path[len(path)-1][:]...)
-	}
 	return
 }
 

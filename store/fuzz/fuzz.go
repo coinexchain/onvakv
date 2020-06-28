@@ -70,8 +70,8 @@ func runTest(cfg *FuzzConfig) {
 		fmt.Printf("Block %d\n", i)
 		root.CheckConsistency()
 		block := GenerateRandBlock(i, ref, rs, cfg)
-		ExecuteBlock(i, root, &block, rs, cfg, false) //not in parrallel
-		//ExecuteBlock(i, root, &block, rs, cfg, true) //in parrallel
+		//ExecuteBlock(i, root, &block, rs, cfg, false) //not in parrallel
+		ExecuteBlock(i, root, &block, rs, cfg, true) //in parrallel
 	}
 	root.Close()
 	if cfg.RootType == "MockDataTree" {
