@@ -111,9 +111,11 @@ func NewOnvaKV(dirName string, queryHistory bool, startEndKeys [][]byte) (*OnvaK
 	} else { // only latest index, no historical index at all
 		okv.idxTree = indextree.NewNVTreeMem(nil)
 		oldestActiveTwigID := okv.meta.GetOldestActiveTwigID()
+		okv.idxTree.BeginWrite(0) // we set height=0 here, which will not be used 
 		okv.datTree.ScanEntries(oldestActiveTwigID, func(pos int64, entry *Entry, _ []int64) {
 			okv.idxTree.Set(entry.Key, uint64(pos))
 		})
+		okv.idxTree.EndWrite()
 	}
 
 	okv.meta.SetIsRunning(true)
@@ -445,7 +447,7 @@ func (okv *OnvaKV) EndWrite() {
 	//if okv.meta.GetActiveEntryCount() != int64(okv.idxTree.ActiveCount()) - 2 {
 	//	panic(fmt.Sprintf("Fuck meta.GetActiveEntryCount %d okv.idxTree.ActiveCount %d\n", okv.meta.GetActiveEntryCount(), okv.idxTree.ActiveCount()))
 	//}
-	//fmt.Printf("numOfKeptEntries %d ActiveCount %d x3 %d\n", okv.numOfKeptEntries(), okv.idxTree.ActiveCount(), okv.idxTree.ActiveCount()*3)
+	fmt.Printf("numOfKeptEntries %d ActiveCount %d x3 %d\n", okv.numOfKeptEntries(), okv.idxTree.ActiveCount(), okv.idxTree.ActiveCount()*3)
 	for okv.numOfKeptEntries() > int64(okv.idxTree.ActiveCount())*KeptEntriesToActiveEntriesRatio &&
 		int64(okv.idxTree.ActiveCount()) > StartReapThres {
 		twigID := okv.meta.GetOldestActiveTwigID()

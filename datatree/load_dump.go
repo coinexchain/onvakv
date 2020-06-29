@@ -373,7 +373,7 @@ func (tree *Tree) RecoverUpperNodes(edgeNodes []*EdgeNode, nList []int64) {
 		tree.nodes[edgeNode.Pos] = &buf
 		//fmt.Printf("EdgeNode %d-%d\n", int64(edgeNode.Pos)>>56, (int64(edgeNode.Pos)<<8)>>8)
 	}
-	fmt.Printf("syncUpperNodes %v\n", nList)
+	//fmt.Printf("syncUpperNodes %v\n", nList)
 	//if len(nList) > 0 && nList[0] >= 2438 {Debug = true}
 	tree.syncUpperNodes(nList)
 	//Debug = false
@@ -427,9 +427,9 @@ func RecoverTree(blockSize int, dirName string, edgeNodes []*EdgeNode, lastPrune
 		startingInactiveTwigID--
 	}
 	nList0 := tree.RecoverInactiveTwigRoots(startingInactiveTwigID, oldestActiveTwigID)
-	fmt.Printf("Here lastPrunedTwigID %d oldestActiveTwigID %d nList0:%v\n", lastPrunedTwigID, oldestActiveTwigID, nList0)
+	//fmt.Printf("Here lastPrunedTwigID %d oldestActiveTwigID %d nList0:%v\n", lastPrunedTwigID, oldestActiveTwigID, nList0)
 	nList := tree.RecoverActiveTwigs(oldestActiveTwigID)
-	fmt.Printf("Here nList:%v\n", nList)
+	//fmt.Printf("Here nList:%v\n", nList)
 	var newList []int64
 	if len(nList0) > 0 && len(nList) > 0 && nList0[len(nList0)-1] == nList[0] {
 		newList = append(nList0, nList[1:]...)

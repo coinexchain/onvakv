@@ -9,8 +9,11 @@ import (
 	"sync"
 	"bufio"
 	"strings"
+	"time"
 
+	sha256 "github.com/minio/sha256-simd"
 	"github.com/coinexchain/randsrc"
+
 	"github.com/coinexchain/onvakv"
 	"github.com/coinexchain/onvakv/store"
 	"github.com/coinexchain/onvakv/store/rabbit"
@@ -18,6 +21,7 @@ import (
 
 const (
 	BatchSize = 1000
+	JobSize = 100
 	SamplePos = 99
 
 	Stripe = 64
@@ -87,6 +91,7 @@ func main() {
 		panic(err)
 	}
 
+	fmt.Printf("Before Start %#v\n", time.Now())
 	okv, err := onvakv.NewOnvaKV("./onvakv4test", false, [][]byte{GuardStart, GuardEnd})
 	if err != nil {
 		panic(err)
@@ -101,13 +106,13 @@ func main() {
 		return
 	}
 
+	fmt.Printf("After Load %#v\n", time.Now())
 	sampleFilename := os.Args[2]
 	var totalRun int
 	trunk := root.GetTrunkStore().(*store.TrunkStore)
 	if os.Args[1] == "rp" {
 		totalRun = ReadSamples(sampleFilename, kvCount, func(batch []KVPair) {
-			rbt := rabbit.NewRabbitStore(trunk)
-			checkPar(rbt, batch)
+			checkPar(trunk, batch)
 		})
 	}
 	if os.Args[1] == "rs" {
@@ -117,6 +122,48 @@ func main() {
 		})
 	}
 	fmt.Printf("totalRun: %d\n", totalRun)
+	root.Close()
+	fmt.Printf("Finished %#v\n", time.Now())
+}
+
+func GetRandKV(touchedShortKeys map[[rabbit.KeySize]byte]struct{}, rs randsrc.RandSrc) (k, v []byte) {
+	for {
+		var sk1, sk2, sk3, sv1, sv2, sv3 [rabbit.KeySize]byte
+		k = rs.GetBytes(32)
+		k1 := sha256.Sum256(k)
+		k2 := sha256.Sum256(k1[:])
+		k3 := sha256.Sum256(k2[:])
+		copy(sk1[:], k1[:])
+		copy(sk2[:], k2[:])
+		copy(sk3[:], k3[:])
+		sk1[0] |= 0x1
+		sk2[0] |= 0x1
+		sk3[0] |= 0x1
+		v = rs.GetBytes(32)
+		v1 := sha256.Sum256(v)
+		v2 := sha256.Sum256(v1[:])
+		v3 := sha256.Sum256(v2[:])
+		copy(sv1[:], v1[:])
+		copy(sv2[:], v2[:])
+		copy(sv3[:], v3[:])
+		sv1[0] |= 0x1
+		sv2[0] |= 0x1
+		sv3[0] |= 0x1
+		if _, ok := touchedShortKeys[sk1]; ok {continue}
+		if _, ok := touchedShortKeys[sk2]; ok {continue}
+		if _, ok := touchedShortKeys[sk3]; ok {continue}
+		if _, ok := touchedShortKeys[sv1]; ok {continue}
+		if _, ok := touchedShortKeys[sv2]; ok {continue}
+		if _, ok := touchedShortKeys[sv3]; ok {continue}
+		touchedShortKeys[sk1] = struct{}{}
+		touchedShortKeys[sk2] = struct{}{}
+		touchedShortKeys[sk3] = struct{}{}
+		touchedShortKeys[sv1] = struct{}{}
+		touchedShortKeys[sv2] = struct{}{}
+		touchedShortKeys[sv3] = struct{}{}
+		break
+	}
+	return
 }
 
 func RandomWrite(root *store.RootStore, rs randsrc.RandSrc, count int) {
@@ -129,13 +176,16 @@ func RandomWrite(root *store.RootStore, rs randsrc.RandSrc, count int) {
 	for i := 0; i < numBatch; i++ {
 		root.SetHeight(int64(i))
 		trunk := root.GetTrunkStore().(*store.TrunkStore)
-		rbt := rabbit.NewRabbitStore(trunk)
 		if i % 100 == 0 {
-			fmt.Printf("Now %d of %d\n", i, numBatch)
+			fmt.Printf("Now %d of %d, %d\n", i, numBatch, root.ActiveCount())
 		}
+		var kList [BatchSize][]byte
+		var vList [BatchSize][]byte
+		touchedShortKeys := make(map[[rabbit.KeySize]byte]struct{}, 6*BatchSize)
 		for j := 0; j < BatchSize; j++ {
-			k := rs.GetBytes(32)
-			v := rs.GetBytes(32)
+			k, v := GetRandKV(touchedShortKeys, rs)
+			kList[j] = k
+			vList[j] = v
 			if j == SamplePos {
 				s := fmt.Sprintf("SAMPLE %s %s\n", base64.StdEncoding.EncodeToString(k),
 					base64.StdEncoding.EncodeToString(v))
@@ -144,14 +194,29 @@ func RandomWrite(root *store.RootStore, rs randsrc.RandSrc, count int) {
 					panic(err)
 				}
 			}
-			rbt.Set(k, v)
 		}
-		rbt.Close(true)
+		var rbtList [BatchSize/JobSize]rabbit.RabbitStore
+		var wg sync.WaitGroup
+		wg.Add(len(rbtList))
+		for x := 0; x < len(rbtList); x++ {
+			go func(x, start int) {
+				rbt := rabbit.NewRabbitStore(trunk)
+				for y := 0; y < JobSize; y++ {
+					rbt.Set(kList[start+y], vList[start+y])
+				}
+				rbtList[x] = rbt
+				wg.Done()
+			}(x, x*JobSize)
+		}
+		wg.Wait()
+		for _, rbt := range rbtList {
+			rbt.Close(true)
+		}
 		trunk.Close(true)
 	}
 }
 
-func checkPar(rbt rabbit.RabbitStore, batch []KVPair) {
+func checkPar(trunk *store.TrunkStore, batch []KVPair) {
 	if len(batch) != ReadBatchSize {
 		panic(fmt.Sprintf("invalid size %d %d", len(batch), ReadBatchSize))
 	}
@@ -159,12 +224,14 @@ func checkPar(rbt rabbit.RabbitStore, batch []KVPair) {
 	for i := 0; i < ReadBatchSize/Stripe; i++ {
 		wg.Add(1)
 		go func(start, end int) {
+			rbt := rabbit.NewRabbitStore(trunk)
 			for _, pair := range batch[start:end] {
 				v := rbt.Get(pair.Key)
 				if !bytes.Equal(v, pair.Value) {
 					fmt.Printf("Not Equal for %v: ref: %v actual: %v\n", pair.Key, pair.Value, v)
 				}
 			}
+			rbt.Close(false)
 			wg.Done()
 		}(i*Stripe, (i+1)*Stripe)
 	}

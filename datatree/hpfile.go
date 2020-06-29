@@ -35,7 +35,7 @@ func NewHPFile(blockSize int, dirName string) (HPFile, error) {
 		if len(twoParts) != 2 {
 			return res, fmt.Errorf("%s does not match the pattern 'FileId-BlockSize'", fileInfo.Name())
 		}
-		id, err := strconv.ParseInt(twoParts[0], 10, 31)
+		id, err := strconv.ParseInt(twoParts[0], 10, 63)
 		if err != nil {
 			return res, err
 		}
@@ -43,7 +43,7 @@ func NewHPFile(blockSize int, dirName string) (HPFile, error) {
 			res.largestID = int(id)
 		}
 		idList = append(idList, int(id))
-		size, err := strconv.ParseInt(twoParts[1], 10, 31)
+		size, err := strconv.ParseInt(twoParts[1], 10, 63)
 		if int64(blockSize) != size {
 			return res, fmt.Errorf("Invalid Size! %d!=%d", size, blockSize)
 		}
