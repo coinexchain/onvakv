@@ -13,16 +13,19 @@ import (
 
 	sha256 "github.com/minio/sha256-simd"
 	"github.com/coinexchain/randsrc"
+	"github.com/dterei/gotsc"
 
 	"github.com/coinexchain/onvakv"
+	"github.com/coinexchain/onvakv/datatree"
 	"github.com/coinexchain/onvakv/store"
 	"github.com/coinexchain/onvakv/store/rabbit"
 )
 
 const (
-	BatchSize = 1000
-	JobSize = 100
+	BatchSize = 10000
+	JobSize = 200
 	SamplePos = 99
+	SampleStripe = 125
 
 	Stripe = 64
 	ReadBatchSize = 64*Stripe
@@ -91,22 +94,28 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Printf("Before Start %#v\n", time.Now())
+	fmt.Printf("Before Start %d\n", time.Now().UnixNano())
 	okv, err := onvakv.NewOnvaKV("./onvakv4test", false, [][]byte{GuardStart, GuardEnd})
 	if err != nil {
 		panic(err)
 	}
 	root := store.NewRootStore(okv, nil, nil)
+	defer root.Close()
 
 	if os.Args[1] == "w" {
 		randFilename := os.Args[2]
 		rs := randsrc.NewRandSrcFromFile(randFilename)
 		RandomWrite(root, rs, kvCount)
-		root.Close()
+		fmt.Printf("Phase1: %d\n", Phase1Time)
+		fmt.Printf("Phase2: %d\n", Phase2Time)
+		fmt.Printf("Phase1: %d\n", onvakv.Phase1Time)
+		fmt.Printf("Phase2: %d\n", onvakv.Phase2Time)
+		fmt.Printf("Phase1: %d\n", datatree.Phase1Time)
+		fmt.Printf("Phase2: %d\n", datatree.Phase2Time)
 		return
 	}
 
-	fmt.Printf("After Load %#v\n", time.Now())
+	fmt.Printf("After Load %f\n", float64(time.Now().UnixNano())/1000000000.0)
 	sampleFilename := os.Args[2]
 	var totalRun int
 	trunk := root.GetTrunkStore().(*store.TrunkStore)
@@ -122,8 +131,7 @@ func main() {
 		})
 	}
 	fmt.Printf("totalRun: %d\n", totalRun)
-	root.Close()
-	fmt.Printf("Finished %#v\n", time.Now())
+	fmt.Printf("Finished %f\n", float64(time.Now().UnixNano())/1000000000.0)
 }
 
 func GetRandKV(touchedShortKeys map[[rabbit.KeySize]byte]struct{}, rs randsrc.RandSrc) (k, v []byte) {
@@ -166,7 +174,10 @@ func GetRandKV(touchedShortKeys map[[rabbit.KeySize]byte]struct{}, rs randsrc.Ra
 	return
 }
 
+var Phase1Time, Phase2Time, Phase3Time uint64
+
 func RandomWrite(root *store.RootStore, rs randsrc.RandSrc, count int) {
+	tscOverhead := gotsc.TSCOverhead()
 	file, err := os.OpenFile("./sample.txt", os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		panic(err)
@@ -176,7 +187,7 @@ func RandomWrite(root *store.RootStore, rs randsrc.RandSrc, count int) {
 	for i := 0; i < numBatch; i++ {
 		root.SetHeight(int64(i))
 		trunk := root.GetTrunkStore().(*store.TrunkStore)
-		if i % 100 == 0 {
+		if i % 20 == 0 {
 			fmt.Printf("Now %d of %d, %d\n", i, numBatch, root.ActiveCount())
 		}
 		var kList [BatchSize][]byte
@@ -186,7 +197,7 @@ func RandomWrite(root *store.RootStore, rs randsrc.RandSrc, count int) {
 			k, v := GetRandKV(touchedShortKeys, rs)
 			kList[j] = k
 			vList[j] = v
-			if j == SamplePos {
+			if (j % SampleStripe) == SamplePos {
 				s := fmt.Sprintf("SAMPLE %s %s\n", base64.StdEncoding.EncodeToString(k),
 					base64.StdEncoding.EncodeToString(v))
 				_, err := file.Write([]byte(s))
@@ -209,10 +220,14 @@ func RandomWrite(root *store.RootStore, rs randsrc.RandSrc, count int) {
 			}(x, x*JobSize)
 		}
 		wg.Wait()
+		start := gotsc.BenchStart()
 		for _, rbt := range rbtList {
 			rbt.Close(true)
 		}
+		Phase1Time += gotsc.BenchEnd() - start - tscOverhead
+		start = gotsc.BenchStart()
 		trunk.Close(true)
+		Phase2Time += gotsc.BenchEnd() - start - tscOverhead
 	}
 }
 

@@ -23,7 +23,7 @@ func TestTwimMtFile(t *testing.T) {
 	os.RemoveAll("./twig")
 	os.Mkdir("./twig", 0700)
 
-	tf, err := NewTwigMtFile(1*1024*1024/*1MB*/, "./twig")
+	tf, err := NewTwigMtFile(64*1024, 1*1024*1024/*1MB*/, "./twig")
 	assert.Equal(t, nil, err)
 
 	twig0 := generateTwig(1000)
@@ -37,7 +37,7 @@ func TestTwimMtFile(t *testing.T) {
 	tf.Sync()
 	tf.Close()
 
-	tf, err = NewTwigMtFile(1*1024*1024/*1MB*/, "./twig")
+	tf, err = NewTwigMtFile(64*1024, 1*1024*1024/*1MB*/, "./twig")
 	assert.Equal(t, nil, err)
 
 	assert.Equal(t, int64(789), tf.GetFirstEntryPos(0))

@@ -9,6 +9,7 @@ In each block we create 1000 KV pairs （Key Length = 32 Value Length = 32）
 |                 | 创建时间 | size of the database (MB) |
 | --------------- | -------- | ------------------------- |
 | GoLevelDB       | 31       | 148                       |
+| OnvaKV          |          |                           |
 | ETH-MPT         | 572      | 2762                      |
 | Tendermint-iavl | 2980     | 4590                      |
 
@@ -24,7 +25,20 @@ Random Read 67108 KV Pairs
 
 |                 | Time used in creation (sec) | size of the database (MB) | Parrallel Read Time (sec) | Serial Read Time (sec) |
 | --------------- | --------------------------: | ------------------------: | ------------------------: | ---------------------: |
-| GoLevelDB       |                         968 |                      2369 |                       6.2 |                    7.8 |
+| GoLevelDB       |                        1159 |                      4607 |                       3.2 |                    7.3 |
+| OnvaKV          |                        5428 |                     29541 |                       6.4 |                    7.3 |
+| OnvaKV.new      |                        3041 |                     30250 |                           |                        |
 | ETH-MPT         |                       28162 |                     63874 |                        28 |                     37 |
 | Tendermint-iavl |                      296342 |                    101750 |                       127 |                    113 |
 
+
+
+40960000
+
+real	17m21.924s onvakv
+
+real	12m23.747s goleveldb
+
+
+
+218162.4500665779

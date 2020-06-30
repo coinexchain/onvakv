@@ -8,6 +8,8 @@ github.com/coinexchain/randsrc v0.1.0/go.mod h1:erQnv+T5z4Ca0rw18gcd4cfpjHj/wvZH
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/dterei/gotsc v0.0.0-20160722215413-e78f872945c6 h1:iD62k/20LzNdTc2bmrOTQ4xgRbI0uJvOxTkEAmd20eQ=
+github.com/dterei/gotsc v0.0.0-20160722215413-e78f872945c6/go.mod h1:P4N3xGqi52atrdlMBXpsAGTqRnLgZ8uDhlkQ7HEYGgo=
 github.com/etcd-io/bbolt v1.3.3/go.mod h1:ZF2nL25h33cCyBtcyWeZ2/I3HQOfTP+0PIEvHjkjCrw=
 github.com/fsnotify/fsnotify v1.4.7/go.mod h1:jwhsz4b93w/PPRr/qN1Yymfu8t87LnFCMoQvtojpjFo=
 github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b/go.mod h1:SBH7ygxi8pfUlaOkMMuAQtPIUF8ecWP5IEl/CR7VP2Q=

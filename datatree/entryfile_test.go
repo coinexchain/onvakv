@@ -47,7 +47,7 @@ func TestEntryFile(t *testing.T) {
 	dSNL2 := []int64{}
 	dSNL3 := []int64{10,1}
 
-	ef, err := NewEntryFile(128*1024/*128KB*/, "./entryF")
+	ef, err := NewEntryFile(8*1024, 128*1024/*128KB*/, "./entryF")
 	assert.Equal(t, nil, err)
 
 	bz0 := EntryToBytes(entries[0], dSNL0)
@@ -73,7 +73,7 @@ func TestEntryFile(t *testing.T) {
 	ef.Sync()
 	ef.Close()
 
-	ef, err = NewEntryFile(128*1024/*128KB*/, "./entryF")
+	ef, err = NewEntryFile(8*1024, 128*1024/*128KB*/, "./entryF")
 	assert.Equal(t, nil, err)
 
 	e, l, next := ef.ReadEntry(pos0)

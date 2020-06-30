@@ -20,7 +20,7 @@ func TestHPFile(t *testing.T) {
 	os.RemoveAll("./test")
 	os.Mkdir("./test", 0700)
 
-	hpfile, err := NewHPFile(64, "./test")
+	hpfile, err := NewHPFile(64, 128, "./test")
 	assert.Equal(t, nil, err)
 	slice0 := newSlice(44, 1)
 	pos, err := hpfile.Append([][]byte{slice0})
@@ -49,6 +49,8 @@ func TestHPFile(t *testing.T) {
 	assert.Equal(t, nil, err)
 	assert.Equal(t, slice0, check0)
 
+	hpfile.Sync()
+
 	check1 := make([]byte, len(slice1))
 	err = hpfile.ReadAt(check1, 44)
 	assert.Equal(t, nil, err)
@@ -68,7 +70,7 @@ func TestHPFile(t *testing.T) {
 	hpfile.Sync()
 	hpfile.Close()
 
-	hpfile, err = NewHPFile(64, "./test")
+	hpfile, err = NewHPFile(64, 128, "./test")
 	assert.Equal(t, nil, err)
 
 	err = hpfile.ReadAt(check0, 0)
@@ -95,9 +97,6 @@ func TestHPFile(t *testing.T) {
 	assert.Equal(t, nil, err)
 	assert.Equal(t, int64(120), hpfile.Size())
 
-	err = hpfile.ReadAt(check1, 44)
-	assert.Equal(t, "Can not find the file with id=0 (44/64)", err.Error())
-
 	err = hpfile.ReadAt(check3, 120)
 	assert.Equal(t, io.EOF, err)
 
@@ -108,7 +107,7 @@ func TestHPFile(t *testing.T) {
 	assert.Equal(t, nil, err)
 	f.Close()
 
-	_, err = NewHPFile(64, "./test")
+	_, err = NewHPFile(64, 128, "./test")
 	assert.Equal(t, "haha does not match the pattern 'FileId-BlockSize'", err.Error())
 
 	os.RemoveAll("./test/haha")
@@ -116,7 +115,7 @@ func TestHPFile(t *testing.T) {
 	assert.Equal(t, nil, err)
 	f.Close()
 
-	_, err = NewHPFile(64, "./test")
+	_, err = NewHPFile(64, 128, "./test")
 	assert.Equal(t, "strconv.ParseInt: parsing \"haha\": invalid syntax", err.Error())
 
 	os.RemoveAll("./test/haha-100")
@@ -124,8 +123,8 @@ func TestHPFile(t *testing.T) {
 	assert.Equal(t, nil, err)
 	f.Close()
 
-	_, err = NewHPFile(64, "./test")
-	assert.Equal(t, "Invalid Size! 100!=64", err.Error())
+	_, err = NewHPFile(64, 128, "./test")
+	assert.Equal(t, "Invalid Size! 100!=128", err.Error())
 
 	os.RemoveAll("./test")
 }

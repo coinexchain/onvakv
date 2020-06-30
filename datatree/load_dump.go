@@ -231,12 +231,12 @@ func (tree *Tree) Sync() {
 
 func LoadTree(blockSize int, dirName string) *Tree {
 	dirEntry := filepath.Join(dirName, entriesPath)
-	entryFile, err := NewEntryFile(blockSize, dirEntry)
+	entryFile, err := NewEntryFile(BufferSize, blockSize, dirEntry)
 	if err != nil {
 		panic(err)
 	}
 	dirTwigMt := filepath.Join(dirName, twigMtPath)
-	twigMtFile, err := NewTwigMtFile(blockSize, dirTwigMt)
+	twigMtFile, err := NewTwigMtFile(BufferSize, blockSize, dirTwigMt)
 	if err != nil {
 		panic(err)
 	}
@@ -396,12 +396,12 @@ func (tree *Tree) RecoverInactiveTwigRoots(lastPrunedTwigID, oldestActiveTwigID 
 
 func RecoverTree(blockSize int, dirName string, edgeNodes []*EdgeNode, lastPrunedTwigID, oldestActiveTwigID, youngestTwigID int64) *Tree {
 	dirEntry := filepath.Join(dirName, entriesPath)
-	entryFile, err := NewEntryFile(blockSize, dirEntry)
+	entryFile, err := NewEntryFile(BufferSize, blockSize, dirEntry)
 	if err != nil {
 		panic(err)
 	}
 	dirTwigMt := filepath.Join(dirName, twigMtPath)
-	twigMtFile, err := NewTwigMtFile(blockSize, dirTwigMt)
+	twigMtFile, err := NewTwigMtFile(BufferSize, blockSize, dirTwigMt)
 	if err != nil {
 		panic(err)
 	}

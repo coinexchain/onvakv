@@ -3,7 +3,7 @@ package datatree
 import (
 	"bytes"
 	"encoding/binary"
-	//"fmt"
+	"fmt"
 	"math"
 
 	"github.com/mmcloughlin/meow"
@@ -188,6 +188,7 @@ func (ef *EntryFile) readMagicBytesAndLength(off int64) (lengthInt int64, length
 		panic(err)
 	}
 	if !bytes.Equal(buf[:8], MagicBytes[:]) {
+		fmt.Printf("Now off %d %x\n", off, off)
 		panic("Invalid MagicBytes")
 	}
 	length := binary.LittleEndian.Uint32(buf[8:12])
@@ -234,8 +235,8 @@ func (ef *EntryFile) ReadEntry(off int64) (*Entry, []int64, int64) {
 	return entry, deactivedSerialNumList, nextPos
 }
 
-func NewEntryFile(blockSize int, dirName string) (res EntryFile, err error) {
-	res.HPFile, err = NewHPFile(blockSize, dirName)
+func NewEntryFile(bufferSize, blockSize int, dirName string) (res EntryFile, err error) {
+	res.HPFile, err = NewHPFile(bufferSize, blockSize, dirName)
 	return
 }
 

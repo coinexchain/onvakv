@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/dterei/gotsc"
 )
 
 //var Debug bool
@@ -66,7 +68,10 @@ type Twig struct {
 	FirstEntryPos  int64
 }
 
+var Phase1Time, Phase2Time, Phase3Time, tscOverhead uint64
+
 func init() {
+	tscOverhead = gotsc.TSCOverhead()
 	NullTwig.FirstEntryPos = -1
 	for i := 0; i < 256; i++ {
 		NullTwig.activeBits[i] = 0
@@ -203,13 +208,13 @@ type Tree struct {
 func NewEmptyTree(blockSize int, dirName string) *Tree {
 	dirEntry := filepath.Join(dirName, entriesPath)
 	os.Mkdir(dirEntry, 0700)
-	entryFile, err := NewEntryFile(blockSize, dirEntry)
+	entryFile, err := NewEntryFile(BufferSize, blockSize, dirEntry)
 	if err != nil {
 		panic(err)
 	}
 	dirTwigMt := filepath.Join(dirName, twigMtPath)
 	os.Mkdir(dirTwigMt, 0700)
-	twigMtFile, err := NewTwigMtFile(blockSize, dirTwigMt)
+	twigMtFile, err := NewTwigMtFile(BufferSize, blockSize, dirTwigMt)
 	if err != nil {
 		panic(err)
 	}
@@ -398,6 +403,7 @@ func (tree *Tree) EvictTwig(twigID int64) {
 }
 
 func (tree *Tree) EndBlock() (rootHash []byte) {
+	//start := gotsc.BenchStart()
 	// sync up the merkle tree
 	rootHash = tree.syncMT()
 	// run the pending twig-deletion jobs
@@ -414,8 +420,11 @@ func (tree *Tree) EndBlock() (rootHash []byte) {
 		delete(tree.activeTwigs, twigID)
 	}
 	tree.twigsToBeDeleted = tree.twigsToBeDeleted[:0] // clear its content
+	//Phase1Time += gotsc.BenchEnd() - start - tscOverhead
+	//start = gotsc.BenchStart()
 	tree.entryFile.Sync()
 	tree.twigMtFile.Sync()
+	//Phase2Time += gotsc.BenchEnd() - start - tscOverhead
 	return
 }
 

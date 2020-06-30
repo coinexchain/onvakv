@@ -8,19 +8,31 @@ import (
 	"strings"
 )
 
+const (
+	BufferSize = 1024*1024 // 1MB
+)
+
 // Head prune-able file
 type HPFile struct {
-	fileMap   map[int]*os.File
-	blockSize int
-	dirName   string
-	largestID int
+	fileMap        map[int]*os.File
+	blockSize      int
+	dirName        string
+	largestID      int
+	latestFileSize int64
+	bufferSize     int
+	buffer         []byte
 }
 
-func NewHPFile(blockSize int, dirName string) (HPFile, error) {
+func NewHPFile(bufferSize, blockSize int, dirName string) (HPFile, error) {
 	res := HPFile{
-		fileMap:   make(map[int]*os.File),
-		blockSize: blockSize,
-		dirName:   dirName,
+		fileMap:    make(map[int]*os.File),
+		blockSize:  blockSize,
+		dirName:    dirName,
+		bufferSize: bufferSize,
+		buffer:     make([]byte, 0, bufferSize),
+	}
+	if blockSize % bufferSize != 0 {
+		panic(fmt.Sprintf("Invalid blockSize 0x%x", blockSize))
 	}
 	fileInfoList, err := ioutil.ReadDir(dirName)
 	if err != nil {
@@ -53,6 +65,9 @@ func NewHPFile(blockSize int, dirName string) (HPFile, error) {
 		var err error
 		if id == res.largestID { // will write to this latest file
 			res.fileMap[id], err = os.OpenFile(fname, os.O_RDWR, 0700)
+			if err == nil {
+				res.latestFileSize, err = res.fileMap[id].Seek(0, os.SEEK_END)
+			}
 		} else {
 			res.fileMap[id], err = os.Open(fname)
 		}
@@ -72,13 +87,7 @@ func NewHPFile(blockSize int, dirName string) (HPFile, error) {
 }
 
 func (hpf *HPFile) Size() int64 {
-	//fmt.Printf("%#v %d\n", hpf.fileMap, hpf.largestID)
-	f := hpf.fileMap[hpf.largestID]
-	size, err := f.Seek(0, os.SEEK_END)
-	if err != nil {
-		panic(err)
-	}
-	return int64(hpf.largestID)*int64(hpf.blockSize) + size
+	return int64(hpf.largestID)*int64(hpf.blockSize) + hpf.latestFileSize
 }
 
 func (hpf *HPFile) Truncate(size int64) error {
@@ -106,10 +115,18 @@ func (hpf *HPFile) Truncate(size int64) error {
 	if err != nil {
 		return err
 	}
+	hpf.latestFileSize = size
 	return hpf.fileMap[hpf.largestID].Truncate(size)
 }
 
 func (hpf *HPFile) Sync() error {
+	if len(hpf.buffer) != 0 {
+		_, err := hpf.fileMap[hpf.largestID].Write(hpf.buffer)
+		if err != nil {
+			return err
+		}
+		hpf.buffer = hpf.buffer[:0]
+	}
 	return hpf.fileMap[hpf.largestID].Sync()
 }
 
@@ -136,23 +153,32 @@ func (hpf *HPFile) ReadAt(buf []byte, off int64) error {
 
 func (hpf *HPFile) Append(bufList [][]byte) (int64, error) {
 	f := hpf.fileMap[hpf.largestID]
-	size, err := f.Seek(0, os.SEEK_END)
-	//fmt.Printf("size after Seek: %d\n", size)
-	if err != nil {
-		return 0, err
-	}
-	startPos := int64(hpf.largestID*hpf.blockSize) + size
-	totalLen := 0
+	startPos := int64(hpf.largestID*hpf.blockSize) + hpf.latestFileSize
 	for _, buf := range bufList {
-		_, err = f.Write(buf)
+		if len(buf) > hpf.bufferSize {
+			panic("buf is too large")
+		}
+		hpf.latestFileSize += int64(len(buf))
+		extraBytes := len(hpf.buffer) + len(buf) - hpf.bufferSize
+		if extraBytes > 0 {
+			hpf.buffer = append(hpf.buffer, buf[:len(buf)-extraBytes]...)
+			buf = buf[len(buf)-extraBytes:]
+			//pos, _ := f.Seek(0, os.SEEK_END)
+			//fmt.Printf("Haha startPos %x: %x + %x > %x; real pos %x\n", startPos, len(hpf.buffer), len(buf), hpf.bufferSize, pos)
+			_, err := f.Write(hpf.buffer)
+			if err != nil {
+				return 0, err
+			}
+			hpf.buffer = hpf.buffer[:0]
+		}
+		hpf.buffer = append(hpf.buffer, buf...)
+	}
+	overflowByteCount := hpf.latestFileSize - int64(hpf.blockSize)
+	if overflowByteCount >= 0 {
+		err := hpf.Sync()
 		if err != nil {
 			return 0, err
 		}
-		totalLen += len(buf)
-	}
-	overflowByteCount := size + int64(totalLen) - int64(hpf.blockSize)
-	if overflowByteCount >= 0 {
-		f.Sync()
 		hpf.largestID++
 		fname := fmt.Sprintf("%s/%d-%d", hpf.dirName, hpf.largestID, hpf.blockSize)
 		f, err = os.OpenFile(fname, os.O_RDWR|os.O_CREATE, 0700)
@@ -160,13 +186,13 @@ func (hpf *HPFile) Append(bufList [][]byte) (int64, error) {
 			return 0, err
 		}
 		if overflowByteCount != 0 {
-			zeroBytes := make([]byte, overflowByteCount)
-			_, err = f.Write(zeroBytes)
-			if err != nil {
-				return 0, err
+			hpf.buffer = hpf.buffer[:overflowByteCount]
+			for i := 0; i < int(overflowByteCount); i++ {
+				hpf.buffer[i] = 0
 			}
 		}
 		hpf.fileMap[hpf.largestID] = f
+		hpf.latestFileSize = overflowByteCount
 	}
 	return startPos, nil
 }

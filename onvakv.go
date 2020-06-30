@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	dbm "github.com/tendermint/tm-db"
+	//"github.com/dterei/gotsc"
 
 	"github.com/coinexchain/onvakv/datatree"
 	"github.com/coinexchain/onvakv/indextree"
@@ -54,6 +55,7 @@ func NewOnvaKV4Mock(startEndKeys [][]byte) *OnvaKV {
 }
 
 func NewOnvaKV(dirName string, queryHistory bool, startEndKeys [][]byte) (*OnvaKV, error) {
+	//tscOverhead = gotsc.TSCOverhead()
 	_, err := os.Stat(dirName)
 	dirNotExists := os.IsNotExist(err)
 	okv := &OnvaKV{
@@ -391,12 +393,11 @@ func (okv *OnvaKV) update() {
 			// if ptr.SerialNum==-1, then we are deleting a just-inserted value, so ignore it.
 			//fmt.Printf("Now we deactive %d for deletion %#v\n", ptr.SerialNum, ptr)
 			okv.idxTree.Delete(ptr.Key)
-			//okv.meta.DecrActiveEntryCount()
 			okv.DeactiviateEntry(ptr.SerialNum)
 		} else if hotEntry.Operation != types.OpNone || hotEntry.IsTouchedByNext {
+			//start := gotsc.BenchStart()
 			if ptr.SerialNum >= 0 { // if this entry already exists
 				//fmt.Printf("Now we deactive %d for refresh %#v\n", ptr.SerialNum, ptr)
-				//okv.meta.DecrActiveEntryCount()
 				okv.DeactiviateEntry(ptr.SerialNum)
 			}
 			ptr.LastHeight = ptr.Height
@@ -404,8 +405,10 @@ func (okv *OnvaKV) update() {
 			ptr.SerialNum = okv.meta.GetMaxSerialNum()
 			//fmt.Printf("Now SerialNum = %d for %s(%#v) %#v Entry %#v\n", ptr.SerialNum, string(ptr.Key), ptr.Key, hotEntry, *ptr)
 			okv.meta.IncrMaxSerialNum()
+			//Phase1Time += gotsc.BenchEnd() - start - tscOverhead
+			//start = gotsc.BenchStart()
 			pos := okv.datTree.AppendEntry(ptr)
-			//okv.meta.IncrActiveEntryCount()
+			//Phase2Time += gotsc.BenchEnd() - start - tscOverhead
 			okv.idxTree.Set(ptr.Key, uint64(pos))
 		}
 	}
@@ -442,12 +445,14 @@ func (okv *OnvaKV) ActiveCount() int {
 	return okv.idxTree.ActiveCount()
 }
 
+var Phase1Time, Phase2Time, Phase3Time, tscOverhead uint64
+
 func (okv *OnvaKV) EndWrite() {
 	okv.update()
 	//if okv.meta.GetActiveEntryCount() != int64(okv.idxTree.ActiveCount()) - 2 {
 	//	panic(fmt.Sprintf("Fuck meta.GetActiveEntryCount %d okv.idxTree.ActiveCount %d\n", okv.meta.GetActiveEntryCount(), okv.idxTree.ActiveCount()))
 	//}
-	fmt.Printf("numOfKeptEntries %d ActiveCount %d x3 %d\n", okv.numOfKeptEntries(), okv.idxTree.ActiveCount(), okv.idxTree.ActiveCount()*3)
+	//fmt.Printf("numOfKeptEntries %d ActiveCount %d x3 %d\n", okv.numOfKeptEntries(), okv.idxTree.ActiveCount(), okv.idxTree.ActiveCount()*3)
 	for okv.numOfKeptEntries() > int64(okv.idxTree.ActiveCount())*KeptEntriesToActiveEntriesRatio &&
 		int64(okv.idxTree.ActiveCount()) > StartReapThres {
 		twigID := okv.meta.GetOldestActiveTwigID()

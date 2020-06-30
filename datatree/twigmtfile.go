@@ -12,8 +12,8 @@ type TwigMtFile struct {
 	HPFile
 }
 
-func NewTwigMtFile(blockSize int, dirName string) (res TwigMtFile, err error) {
-	res.HPFile, err = NewHPFile(blockSize, dirName)
+func NewTwigMtFile(bufferSize, blockSize int, dirName string) (res TwigMtFile, err error) {
+	res.HPFile, err = NewHPFile(bufferSize, blockSize, dirName)
 	return
 }
 
