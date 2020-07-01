@@ -1,6 +1,6 @@
 ### Introduction to packages of OnvaKV
 
-Here we introduce the packages and the data structres defined in the OnvaKV repo.
+Here we introduce the packages and the data structures defined in the [OnvaKV](https://github.com/coinexchain/onvakv) repo.
 
 ### OnvaKV
 
