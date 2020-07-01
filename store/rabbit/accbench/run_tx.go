@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"encoding/binary"
 	"math/big"
 	"os"
@@ -15,7 +16,7 @@ const (
 	NumTxPerWorker = 16
 	NumTxInEpoch = 1024
 	NumWorkers = NumTxInEpoch / NumTxPerWorker
-	NumEpochInBlock = 16
+	NumEpochInBlock = 32
 )
 
 type Epoch struct {
@@ -35,13 +36,14 @@ type Job struct {
 func ReadEpoch(fin *os.File) (epoch Epoch) {
 	for i := 0; i < NumWorkers; i++ {
 		for j := 0; j < NumTxPerWorker; j++ {
-			var bz [24+AddrLen]byte
+			var bz [TxLen]byte
 			_, err := fin.Read(bz[:])
 			if err != nil {
 				panic(err)
 			}
 			epoch.jobList[i].txList[j] = ParseTx(bz)
 		}
+		epoch.jobList[i].changedAccList = make([]AccountAndNum, 0, 2*NumTxPerWorker)
 	}
 	return
 }
@@ -79,6 +81,7 @@ func (epoch Epoch) Run(root *store.RootStore) {
 	}
 	wg.Wait()
 	if !isValid {
+		fmt.Printf("Found an invalid epoch!")
 		return
 	}
 	for i := 0; i < NumWorkers; i++ {
@@ -106,18 +109,30 @@ func (job *Job) executeTx(root *store.RootStore, tx Tx) {
 	var fromAcc, toAcc Account
 	fromShortKey := getShortKey(tx.FromNum)
 	toShortKey := getShortKey(tx.ToNum)
+	root.PrepareForUpdate(fromShortKey)
 	fromAccBz := root.Get(fromShortKey)
 	if len(fromAccBz) == 0 {
+		fmt.Printf("Cannot find from-account")
 		return
 	}
+	root.PrepareForUpdate(toShortKey)
 	toAccBz := root.Get(toShortKey)
 	if len(toAccBz) == 0 {
+		fmt.Printf("Cannot find to-account")
 		return
 	}
 	fromAcc.FromBytes(fromAccBz)
 	toAcc.FromBytes(toAccBz)
 	fromIdx := fromAcc.Find(tx.CoinID)
+	if fromIdx < 0 {
+		fmt.Printf("Cannot find the token in from-account")
+		return
+	}
 	toIdx := toAcc.Find(tx.CoinID)
+	if toIdx < 0 {
+		fmt.Printf("Cannot find the token in to-account")
+		return
+	}
 	amount := int64(tx.Amount)
 	if amount < 0 {
 		amount = -amount
@@ -127,23 +142,28 @@ func (job *Job) executeTx(root *store.RootStore, tx Tx) {
 	toAmount.SetBytes(toAcc.GetTokenAmount(toIdx))
 	amountInt := big.NewInt(amount)
 	if fromAmount.Cmp(amountInt) < 0 { // not enough tokens
+		fmt.Printf("Not enough token")
 		return // fail
 	}
 	fromAmount.Sub(fromAmount, amountInt)
 	toNewAmount.Add(toAmount, amountInt)
 	if toNewAmount.Cmp(toAmount) < 0 { //overflow
+		fmt.Printf("token overflow")
 		return // fail
 	}
 	fromAcc.SetTokenAmount(fromIdx, BigIntToBytes(fromAmount))
 	toAcc.SetTokenAmount(toIdx, BigIntToBytes(toAmount))
 	nativeTokenAmount.SetBytes(fromAcc.GetNativeAmount())
-	nativeTokenAmount.Sub(nativeTokenAmount, big.NewInt(10))
+	gas := big.NewInt(10)
+	if nativeTokenAmount.Cmp(gas) < 0 { //overflow
+		fmt.Printf("not enough native token for gas")
+		return // fail
+	}
+	nativeTokenAmount.Sub(nativeTokenAmount, gas)
 	fromAcc.SetNativeAmount(BigIntToBytes(nativeTokenAmount))
 	fromAcc.SetSequence(fromAcc.GetSequence()+1)
 	job.changedAccList = append(job.changedAccList, AccountAndNum{fromAcc, tx.FromNum})
 	job.changedAccList = append(job.changedAccList, AccountAndNum{toAcc, tx.ToNum})
-	root.PrepareForUpdate(fromShortKey)
-	root.PrepareForUpdate(toShortKey)
 }
 
 func RunTx(numEpoch int, txFile string) {

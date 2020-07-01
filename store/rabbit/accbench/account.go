@@ -8,12 +8,14 @@ import (
 	"math/big"
 	"os"
 	"sort"
+	"sync"
 
 	sha256 "github.com/minio/sha256-simd"
 	"github.com/coinexchain/randsrc"
 
 	"github.com/coinexchain/onvakv"
 	"github.com/coinexchain/onvakv/store"
+	"github.com/coinexchain/onvakv/store/types"
 	"github.com/coinexchain/onvakv/store/rabbit"
 )
 
@@ -23,41 +25,49 @@ var (
 )
 
 const (
-	MaxCoinCount = 20
-	NumCoinType = 100
+	MaxCoinCount = 20 // maximum count of coin types in an account
+	NumCoinType = 100 // total coin types in the system
 
 	AddrLen = 20
+	ShortIDLen = 8
 	AmountLen = 32
-	EntryLen = AddrLen + AmountLen
+	EntryLen = ShortIDLen + AmountLen
 	AddressOffset = 0
 	SequenceOffset = AddressOffset + AddrLen
 	NativeTokenAmountOffset = SequenceOffset + 8
 	ERC20TokenOffset = NativeTokenAmountOffset + AmountLen
+
+	NumNewAccountsInBlock = 20000
+	NumNewAccountsPerWorker = 400
+	NumWorkersInBlock = NumNewAccountsInBlock/NumNewAccountsPerWorker
 )
 
-var CoinIDList [NumCoinType][AddrLen]byte
-
-func CoinTypeToCoinID(i int) (res [AddrLen]byte) {
+// convert coin type as an integer to coin id as a hash
+func CoinTypeToCoinID(i int) (res [ShortIDLen]byte) {
 	hash := sha256.Sum256([]byte(fmt.Sprintf("coin%d", i)))
 	copy(res[:], hash[:])
 	return
 }
 
-func init() {
+var CoinIDList [NumCoinType][ShortIDLen]byte
+
+func init() { //initialize CoinIDList
 	for i := range CoinIDList {
 		CoinIDList[i] = CoinTypeToCoinID(i)
 	}
 }
 
 type Coin struct {
-	ID     [AddrLen]byte
+	ID     [ShortIDLen]byte
 	Amount [AmountLen]byte
 }
 
 type Account struct {
-	bz        []byte
+	bz        []byte //all the operations directly read/write raw bytes
 	coinCount int
 }
+
+var _ types.Serializable = &Account{}
 
 func (acc *Account) ToBytes() []byte {
 	return acc.bz
@@ -65,7 +75,7 @@ func (acc *Account) ToBytes() []byte {
 
 func (acc *Account) FromBytes(bz []byte) {
 	if len(bz) < ERC20TokenOffset || len(bz[ERC20TokenOffset:]) % EntryLen != 0 {
-		acc = nil
+		panic("Invalid bytes for Account")
 	}
 	acc.bz = bz
 	acc.coinCount = len(bz[ERC20TokenOffset:]) / EntryLen
@@ -79,14 +89,17 @@ func (acc *Account) DeepCopy() interface{} {
 }
 
 func NewAccount(addr [AddrLen]byte, sequence int64, nativeTokenAmount [AmountLen]byte, coins []Coin) Account {
-	bz := make([]byte, AddrLen+8+AmountLen+len(coins)*(AddrLen+AmountLen))
+	bz := make([]byte, AddrLen+8+AmountLen+len(coins)*EntryLen)
 	copy(bz[AddressOffset:], addr[:])
-	binary.LittleEndian.PutUint64(bz[SequenceOffset:], uint64(sequence))
+	binary.LittleEndian.PutUint64(bz[SequenceOffset:SequenceOffset+8], uint64(sequence))
 	copy(bz[NativeTokenAmountOffset:], nativeTokenAmount[:])
 	start := ERC20TokenOffset
+	if len(coins) > MaxCoinCount {
+		panic("Too many coins")
+	}
 	for _, coin := range coins {
 		copy(bz[start:], coin.ID[:])
-		copy(bz[start+AddrLen:], coin.Amount[:])
+		copy(bz[start+ShortIDLen:], coin.Amount[:])
 		start += EntryLen
 	}
 	return Account{bz: bz, coinCount: len(coins)}
@@ -112,34 +125,45 @@ func (acc Account) SetNativeAmount(amount [AmountLen]byte) {
 	copy(acc.bz[NativeTokenAmountOffset:], amount[:])
 }
 
-func (acc Account) GetTokenID(i int) []byte {
+func (acc Account) GetTokenID(i int) (res [ShortIDLen]byte) {
 	start := ERC20TokenOffset + i*EntryLen
-	return acc.bz[start:start+AddrLen]
+	copy(res[:], acc.bz[start:start+ShortIDLen])
+	return
 }
 
 func (acc Account) GetTokenAmount(i int) []byte {
-	start := ERC20TokenOffset + i*EntryLen + AddrLen
+	start := ERC20TokenOffset + i*EntryLen + ShortIDLen
 	return acc.bz[start:start+AmountLen]
 }
 
 func (acc Account) SetTokenAmount(i int, amount [AmountLen]byte) {
-	start := ERC20TokenOffset + i*EntryLen + AddrLen
+	start := ERC20TokenOffset + i*EntryLen + ShortIDLen
 	copy(acc.bz[start:], amount[:])
 }
 
-func (acc Account) Find(tokenID [AddrLen]byte) int {
+func (acc Account) Find(tokenID [ShortIDLen]byte) int {
 	i := sort.Search(acc.coinCount, func(i int) bool {
-		return bytes.Compare(acc.GetTokenID(i), tokenID[:]) >= 0
+		id := acc.GetTokenID(i)
+		return bytes.Compare(id[:], tokenID[:]) >= 0
 	})
-	if i < acc.coinCount && bytes.Equal(acc.GetTokenID(i), tokenID[:]) { //present
+	id := acc.GetTokenID(i)
+	if i < acc.coinCount && bytes.Equal(id[:], tokenID[:]) { //present
 		return i
 	} else { // not present
 		return -1
 	}
 }
 
+// the serial number of an account decides its address
+func SNToAddr(accountSN int64) (addr [AddrLen]byte) {
+	hash := sha256.Sum256([]byte(fmt.Sprintf("address%d", accountSN)))
+	copy(addr[:], hash[:])
+	return
+}
+
+// the serial number of an account decides which types of coins it has
 func GetCoinList(accountSN int64) []uint8 {
-	hash := sha256.Sum256([]byte(fmt.Sprintf("cointypelist%d", accountSN)))
+	hash := sha256.Sum256([]byte(fmt.Sprintf("listofcoins%d", accountSN)))
 	coinCount := 1 + hash[0]%MaxCoinCount
 	res := make([]uint8, coinCount)
 	for i := range res {
@@ -162,12 +186,6 @@ func GetRandAmount(rs randsrc.RandSrc) [AmountLen]byte {
 	i := big.NewInt(int64(rs.GetUint32()))
 	i.Lsh(i, 128)
 	return BigIntToBytes(i)
-}
-
-func SNToAddr(accountSN int64) (addr [AddrLen]byte) {
-	hash := sha256.Sum256([]byte(fmt.Sprintf("address%d", accountSN)))
-	copy(addr[:], hash[:])
-	return
 }
 
 func GenerateAccount(accountSN int64, rs randsrc.RandSrc) Account {
@@ -194,25 +212,13 @@ func RunGenerateAccounts(numAccounts int, randFilename string, jsonFile string) 
 	}
 	root := store.NewRootStore(okv, nil, nil)
 
-	numBlocks := numAccounts / 1000 //create 1000 accounts every block
+	if numAccounts % NumNewAccountsInBlock != 0 {
+		panic("numAccounts % NumNewAccountsInBlock != 0")
+	}
+	numBlocks := numAccounts / NumNewAccountsInBlock
 	for i := 0; i < numBlocks; i++ {
 		trunk := root.GetTrunkStore().(*store.TrunkStore)
-		rbt := rabbit.NewRabbitStore(trunk)
-		for j := 0; j < 1000; j++ {
-			acc := GenerateAccount(int64(i*1000+j), rs)
-			rbt.SetObj(acc.Address(), &acc)
-			path, ok := rbt.GetShortKeyPath(acc.Address())
-			if !ok {
-				panic("Cannot get the object which was just set")
-			}
-			if len(path) > 1 {
-				var addr [AddrLen]byte
-				copy(addr[:], acc.Address())
-				n := binary.LittleEndian.Uint64(path[len(path)-1][:])
-				addr2num[addr] = n
-			}
-		}
-		rbt.Close(true)
+		GenerateAccountsInBlock(i*NumNewAccountsInBlock, trunk, rs, addr2num)
 		trunk.Close(true)
 	}
 
@@ -227,3 +233,64 @@ func RunGenerateAccounts(numAccounts int, randFilename string, jsonFile string) 
 	root.Close()
 }
 
+func GenerateAccountsInBlock(startIdx int, trunk *store.TrunkStore, rs randsrc.RandSrc, addr2num map[[AddrLen]byte]uint64) {
+	var accounts [NumWorkersInBlock][NumNewAccountsPerWorker]Account
+	accSN := int64(startIdx)
+	for i := 0; i < NumWorkersInBlock; i++ {
+		for j := 0; j < NumNewAccountsPerWorker; j++ {
+			accounts[i][j] = GenerateAccount(accSN, rs)
+			accSN++
+		}
+	}
+	var rbtList [NumWorkersInBlock]rabbit.RabbitStore
+	// Parrallel execution
+	var wg sync.WaitGroup
+	wg.Add(len(rbtList))
+	for i := 0; i < NumWorkersInBlock; i++ {
+		go func(accList [NumNewAccountsPerWorker]Account) {
+			rbt := rabbit.NewRabbitStore(trunk)
+			rbtList[i] = rbt
+			WriteAccounts(accList, rbt, addr2num)
+			wg.Done()
+		}(accounts[i])
+	}
+	wg.Wait()
+	// Serial collection
+	touchedShortKey := make(map[[rabbit.KeySize]byte]struct{}, NumNewAccountsInBlock)
+	for i, rbt := range rbtList {
+		hasConflict := false
+		rbt.ScanAllShortKeys(func(key [rabbit.KeySize]byte) (stop bool) {
+			if _, ok := touchedShortKey[key]; ok {
+				hasConflict = true
+				return true
+			}
+			return false
+		})
+		if hasConflict { // re-execute it serially
+			rbt.Close(false)
+			rbt = rabbit.NewRabbitStore(trunk)
+			WriteAccounts(accounts[i], rbt, addr2num)
+		}
+		rbt.ScanAllShortKeys(func(key [rabbit.KeySize]byte) (stop bool) {
+			touchedShortKey[key] = struct{}{}
+			return false
+		})
+		rbt.Close(true)
+	}
+}
+
+func WriteAccounts(accList [NumNewAccountsPerWorker]Account, rbt rabbit.RabbitStore, addr2num map[[AddrLen]byte]uint64) {
+	for _, acc := range accList {
+		rbt.SetObj(acc.Address(), &acc)
+		path, ok := rbt.GetShortKeyPath(acc.Address())
+		if !ok {
+			panic("Cannot get the object which was just set")
+		}
+		if len(path) > 1 { // special cases: more than one hop
+			var addr [AddrLen]byte
+			copy(addr[:], acc.Address())
+			n := binary.LittleEndian.Uint64(path[len(path)-1][:])
+			addr2num[addr] = n
+		}
+	}
+}

@@ -73,6 +73,13 @@ func NewSimpleCacheStore() *SimpleCacheStore {
 	}
 }
 
+func (scs *SimpleCacheStore) ScanAllShortKeys(fn func(key [KeySize]byte) bool) {
+	for key := range scs.m {
+		stop := fn(key)
+		if stop {break}
+	}
+}
+
 func (scs *SimpleCacheStore) ScanAllEntries(fn func(key, value []byte, isDeleted bool)) {
 	for key, cv := range scs.m {
 		if cv.obj == nil && !cv.isDeleted && !cv.isEmpty {

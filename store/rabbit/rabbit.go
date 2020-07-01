@@ -32,6 +32,10 @@ func NewRabbitStore(trunk *store.TrunkStore) (rabbit RabbitStore) {
 	return
 }
 
+func (rabbit RabbitStore) ScanAllShortKeys(fn func(key [KeySize]byte) bool) {
+	rabbit.sms.cache.ScanAllShortKeys(fn)
+}
+
 var _ types.MultiStoreI = &RabbitStore{}
 
 func (rabbit RabbitStore) Has(key []byte) bool {

@@ -44,7 +44,20 @@ real	12m23.747s goleveldb
 
 218162.4500665779
 
+---
 
 
 
+Create N=4096 Blocks
+
+Random Read 327680 KV Pairs
+
+
+
+|                 | Time used in creation (sec) | size of the database (MB) | Parrallel Read Time (sec) | Serial Read Time (sec) |
+| --------------- | --------------------------: | ------------------------: | ------------------------: | ---------------------: |
+| GoLevelDB       |                         531 |                      2886 |                     31.72 |                  10.47 |
+| OnvaKV          |                        1671 |                     18442 |                      1.17 |                   2.60 |
+| ETH-MPT         |                             |                           |                           |                        |
+| Tendermint-iavl |                             |                           |                           |                        |
 
