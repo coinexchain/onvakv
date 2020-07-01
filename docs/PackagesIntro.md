@@ -361,7 +361,7 @@ There are 24 holes, each of which can hold a carrot. Rabbits come and put their 
 
 1. She hashes the name "Alice's yummy carrot" once and gets a number 13 . She hops to the #13 hole and finds another carrot in it. So her carrot cannot be stored in this hole.
 2. She hashes the name twice and get a number 22. She hops to the #22 hole and finds another carrot in it. So her carrot cannot be stored in this hole either.
-3. She hashes the name for tree times and get a number 21. She hops to the #21 hole and finds an empty hole. So she can store "Alice's yummy carrot" in it.
+3. She hashes the name for three times and get a number 21. She hops to the #21 hole and finds an empty hole. So she can store "Alice's yummy carrot" in it.
 4. She places one stone at #13 hole and one stone at #14 hole, which mean she must pass by these holes to reach the correct hole storing her carrot.
 
 Finally, the Bob rabbit is coming with his carrot which is name as "Bob's delicious carrot". He does similar steps as Alice. He hops to #22 hole first, and then hops to #11 hole, finding these holes are full. At last he find an empty #9 hole. He stores his carrot in #9 and place two holes at #22 hole and #11 hole.
