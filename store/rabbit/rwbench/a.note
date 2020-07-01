@@ -1,0 +1,46 @@
+
+
+
+Phase1: 2670949552
+Phase2: 10577049006
+
+
+	Phase1: 206852608 for _, rbt := range rbtList { rbt.Close(true) }
+	Phase2: 10438011792  trunk.Close(true)
+		Phase1: 2735784924 onvakv.update
+		Phase2: 7625043942 others
+			Phase1: 7441050462 EndBlock
+			Phase2: 163650692 others
+
+			Phase1: 384397566
+			Phase2: 7215394248
+			
+		
+
+
+Phase1: 2707866954 parrellel parepare
+Phase2: 35506562776
+	Phase1: 214379112 for _, rbt := range rbtList { rbt.Close(true) }
+	Phase2: 35430654912 trunk.Close(true)
+		Phase1: 27523643572 onvakv.update
+			Phase1: 398522132 before update stored data
+			Phase2: 27229229496 after update stored data
+				Phase1: 73709574 others
+				Phase2: 27126654996 okv.datTree.AppendEntry and okv.idxTree.Set
+					Phase1: 26707837968 okv.datTree.AppendEntry
+						Phase1: 43473792 before EntryToBytes
+						Phase2: 26709954246 after EntryToBytes
+							Phase1: 166206084 EntryToBytes itself
+							Phase2: 26601966656 others
+								Phase1: 12560863300 entryFile.Append
+								Phase2: 13523923424 others
+									Phase1: 465986218
+									Phase2: 13498858826 if clause
+										Phase1: 184620650 tree.syncMT4YoungestTwig()
+										Phase2: 13111836372 tree.twigMtFile.AppendTwig
+										Phase3: 4871766 others
+					Phase2: 332748074 okv.idxTree.Set
+		Phase2: 7635985582 others
+
+		
+
