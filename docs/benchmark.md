@@ -28,7 +28,7 @@ Random Read 67108 KV Pairs
 | GoLevelDB       |                        1159 |                      4607 |                       3.2 |                    7.3 |
 | OnvaKV          |                        5428 |                     29541 |                       6.4 |                    7.3 |
 | GoLevelDB.new   |                         646 |                      2885 |                      10.5 |                  30.62 |
-| OnvaKV.new      |                        1690 |                     18442 |                       1.3 |                        |
+| OnvaKV.new      |                        1690 |                     18442 |                       1.3 |                    2.5 |
 | ETH-MPT         |                       28162 |                     63874 |                        28 |                     37 |
 | Tendermint-iavl |                      296342 |                    101750 |                       127 |                    113 |
 
