@@ -75,7 +75,7 @@ func (acc *Account) ToBytes() []byte {
 
 func (acc *Account) FromBytes(bz []byte) {
 	if len(bz) < ERC20TokenOffset || len(bz[ERC20TokenOffset:]) % EntryLen != 0 {
-		panic("Invalid bytes for Account")
+		panic(fmt.Sprintf("Invalid bytes for Account: %#v", bz))
 	}
 	acc.bz = bz
 	acc.coinCount = len(bz[ERC20TokenOffset:]) / EntryLen
@@ -103,6 +103,19 @@ func NewAccount(addr [AddrLen]byte, sequence int64, nativeTokenAmount [AmountLen
 		start += EntryLen
 	}
 	return Account{bz: bz, coinCount: len(coins)}
+}
+
+func (acc *Account) GetCoinCount() int {
+	return acc.coinCount
+}
+
+func (acc Account) GetInfo() string {
+	var buffer bytes.Buffer
+	buffer.WriteString(fmt.Sprintf("Account %#v seq %x %d\n", acc.Address(), acc.GetSequence(), acc.GetSequence()>>32))
+	for i := 0; i < acc.coinCount; i++ {
+		buffer.WriteString(fmt.Sprintf("   Coin#%d %#v\n", i, acc.GetTokenID(i)))
+	}
+	return buffer.String()
 }
 
 func (acc Account) Address() []byte {
@@ -188,6 +201,20 @@ func GetRandAmount(rs randsrc.RandSrc) [AmountLen]byte {
 	return BigIntToBytes(i)
 }
 
+func GenerateZeroCoinAccount(accountSN int64) Account {
+	var zero [AmountLen]byte
+	coinList := GetCoinList(accountSN)
+	coins := make([]Coin, len(coinList))
+	for i := range coins {
+		coinType := int(coinList[i])
+		coins[i].ID = CoinIDList[coinType]
+	}
+	sort.Slice(coins, func(i, j int) bool {
+		return bytes.Compare(coins[i].ID[:], coins[j].ID[:]) < 0
+	})
+	return NewAccount(SNToAddr(accountSN), accountSN<<32, zero, coins)
+}
+
 func GenerateAccount(accountSN int64, rs randsrc.RandSrc) Account {
 	nativeTokenAmount := GetRandAmount(rs)
 	coinList := GetCoinList(accountSN)
@@ -200,7 +227,7 @@ func GenerateAccount(accountSN int64, rs randsrc.RandSrc) Account {
 	sort.Slice(coins, func(i, j int) bool {
 		return bytes.Compare(coins[i].ID[:], coins[j].ID[:]) < 0
 	})
-	return NewAccount(SNToAddr(accountSN), 0, nativeTokenAmount, coins)
+	return NewAccount(SNToAddr(accountSN), accountSN<<32, nativeTokenAmount, coins)
 }
 
 func RunGenerateAccounts(numAccounts int, randFilename string, jsonFile string) {
@@ -217,6 +244,10 @@ func RunGenerateAccounts(numAccounts int, randFilename string, jsonFile string) 
 	}
 	numBlocks := numAccounts / NumNewAccountsInBlock
 	for i := 0; i < numBlocks; i++ {
+		root.SetHeight(int64(i))
+		if i % 10 == 0 {
+			fmt.Printf("Now %d of %d, %d\n", i, numBlocks, root.ActiveCount())
+		}
 		trunk := root.GetTrunkStore().(*store.TrunkStore)
 		GenerateAccountsInBlock(i*NumNewAccountsInBlock, trunk, rs, addr2num)
 		trunk.Close(true)
@@ -227,6 +258,7 @@ func RunGenerateAccounts(numAccounts int, randFilename string, jsonFile string) 
 	if err != nil {
 		panic(err)
 	}
+	fmt.Printf("len(addr2num): %d, addr2num: %s\n", len(addr2num), string(b))
 	out.Write(b)
 	out.Close()
 
@@ -247,12 +279,12 @@ func GenerateAccountsInBlock(startIdx int, trunk *store.TrunkStore, rs randsrc.R
 	var wg sync.WaitGroup
 	wg.Add(len(rbtList))
 	for i := 0; i < NumWorkersInBlock; i++ {
-		go func(accList [NumNewAccountsPerWorker]Account) {
+		go func(i int) {
 			rbt := rabbit.NewRabbitStore(trunk)
 			rbtList[i] = rbt
-			WriteAccounts(accList, rbt, addr2num)
+			WriteAccounts(accounts, i, rbt, addr2num)
 			wg.Done()
-		}(accounts[i])
+		}(i)
 	}
 	wg.Wait()
 	// Serial collection
@@ -267,9 +299,10 @@ func GenerateAccountsInBlock(startIdx int, trunk *store.TrunkStore, rs randsrc.R
 			return false
 		})
 		if hasConflict { // re-execute it serially
+			fmt.Printf("hasConflict %d\n", i)
 			rbt.Close(false)
 			rbt = rabbit.NewRabbitStore(trunk)
-			WriteAccounts(accounts[i], rbt, addr2num)
+			WriteAccounts(accounts, i, rbt, addr2num)
 		}
 		rbt.ScanAllShortKeys(func(key [rabbit.KeySize]byte) (stop bool) {
 			touchedShortKey[key] = struct{}{}
@@ -279,9 +312,9 @@ func GenerateAccountsInBlock(startIdx int, trunk *store.TrunkStore, rs randsrc.R
 	}
 }
 
-func WriteAccounts(accList [NumNewAccountsPerWorker]Account, rbt rabbit.RabbitStore, addr2num map[[AddrLen]byte]uint64) {
-	for _, acc := range accList {
-		rbt.SetObj(acc.Address(), &acc)
+func WriteAccounts(accounts [NumWorkersInBlock][NumNewAccountsPerWorker]Account, i int, rbt rabbit.RabbitStore, addr2num map[[AddrLen]byte]uint64) {
+	for _, acc := range accounts[i] {
+		rbt.Set(acc.Address(), acc.ToBytes())
 		path, ok := rbt.GetShortKeyPath(acc.Address())
 		if !ok {
 			panic("Cannot get the object which was just set")

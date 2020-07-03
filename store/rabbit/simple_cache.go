@@ -23,6 +23,22 @@ type CachedValue struct {
 	isDirty   bool
 }
 
+func (v *CachedValue) IsEmpty() bool {
+	return v.isEmpty
+}
+
+func (v *CachedValue) GetValue() []byte {
+	if bz, ok := v.obj.([]byte); ok {
+		return bz
+	} else {
+		return v.obj.(types.Serializable).ToBytes()
+	}
+}
+
+func (v *CachedValue) SetValue(obj interface{}) {
+	v.obj = obj
+}
+
 func (v *CachedValue) ToBytes() []byte {
 	var buf, value []byte
 	if v.isEmpty {
@@ -31,11 +47,7 @@ func (v *CachedValue) ToBytes() []byte {
 	} else {
 		buf = make([]byte, 1+8+4, 1+8+4+len(v.key)+len(value))
 		buf[EmptyMarkerIndex] = 0
-		if bz, ok := v.obj.([]byte); ok {
-			value = bz
-		} else {
-			value = v.obj.(types.Serializable).ToBytes()
-		}
+		value = v.GetValue()
 	}
 	binary.LittleEndian.PutUint64(buf[PassbyNumIndex:PassbyNumIndex+8], v.passbyNum)
 	binary.LittleEndian.PutUint32(buf[KeyLenStart:KeyStart], uint32(len(v.key)))
@@ -47,7 +59,13 @@ func (v *CachedValue) ToBytes() []byte {
 }
 
 func BytesToCachedValue(buf []byte) *CachedValue {
+	if len(buf) < KeyStart {
+		return nil
+	}
 	keyLen := int(binary.LittleEndian.Uint32(buf[KeyLenStart:KeyStart]))
+	if len(buf) < KeyStart+keyLen {
+		return nil
+	}
 	res := &CachedValue {
 		passbyNum: binary.LittleEndian.Uint64(buf[PassbyNumIndex:PassbyNumIndex+8]),
 		key:       buf[KeyStart:KeyStart+keyLen],

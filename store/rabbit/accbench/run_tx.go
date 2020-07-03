@@ -6,6 +6,9 @@ import (
 	"math/big"
 	"os"
 	"sync"
+	"time"
+
+	"github.com/mmcloughlin/meow"
 
 	"github.com/coinexchain/onvakv"
 	"github.com/coinexchain/onvakv/store"
@@ -13,19 +16,23 @@ import (
 )
 
 const (
-	NumTxPerWorker = 16
 	NumTxInEpoch = 1024
-	NumWorkers = NumTxInEpoch / NumTxPerWorker
+	NumWorkers = 64
+	NumTxPerWorker =  NumTxInEpoch / NumWorkers
 	NumEpochInBlock = 32
 )
+
+type Block struct {
+	epochList [NumEpochInBlock]Epoch
+}
 
 type Epoch struct {
 	jobList [NumWorkers]Job
 }
 
 type AccountAndNum struct {
-	acc Account
-	num uint64
+	acc *rabbit.CachedValue
+	num [rabbit.KeySize]byte
 }
 
 type Job struct {
@@ -34,6 +41,7 @@ type Job struct {
 }
 
 func ReadEpoch(fin *os.File) (epoch Epoch) {
+	hash64 := meow.New64(0)
 	for i := 0; i < NumWorkers; i++ {
 		for j := 0; j < NumTxPerWorker; j++ {
 			var bz [TxLen]byte
@@ -41,15 +49,25 @@ func ReadEpoch(fin *os.File) (epoch Epoch) {
 			if err != nil {
 				panic(err)
 			}
-			epoch.jobList[i].txList[j] = ParseTx(bz)
+			tx := ParseTx(bz)
+			epoch.jobList[i].txList[j] = tx
+			tx.UpdateHash64(hash64)
 		}
 		epoch.jobList[i].changedAccList = make([]AccountAndNum, 0, 2*NumTxPerWorker)
+	}
+	var buf [8]byte
+	_, err := fin.Read(buf[:])
+	if err != nil {
+		panic(err)
+	}
+	if hash64.Sum64() != binary.LittleEndian.Uint64(buf[:]) {
+		panic("Epoch checksum error!")
 	}
 	return
 }
 
 func (epoch Epoch) Check() bool {
-	touchedNum := make(map[uint64]struct{}, 2*NumTxInEpoch)
+	touchedNum := make(map[[rabbit.KeySize]byte]struct{}, 2*NumTxInEpoch)
 	for i := 0; i < NumWorkers; i++ {
 		for j := 0; j < NumTxPerWorker; j++ {
 			tx := epoch.jobList[i].txList[j]
@@ -68,7 +86,7 @@ func (epoch Epoch) Check() bool {
 func (epoch Epoch) Run(root *store.RootStore) {
 	var wg sync.WaitGroup
 	isValid := true
-	wg.Add(1+NumWorkers)
+	wg.Add(1+len(epoch.jobList))
 	go func() {
 		isValid = epoch.Check()
 		wg.Done()
@@ -84,13 +102,6 @@ func (epoch Epoch) Run(root *store.RootStore) {
 		fmt.Printf("Found an invalid epoch!")
 		return
 	}
-	for i := 0; i < NumWorkers; i++ {
-		for _, accAndNum := range epoch.jobList[i].changedAccList {
-			k := getShortKey(accAndNum.num)
-			v := accAndNum.acc.ToBytes()
-			root.Set(k, v)
-		}
-	}
 }
 
 func getShortKey(n uint64) []byte {
@@ -105,35 +116,42 @@ func (job *Job) Run(root *store.RootStore) {
 	}
 }
 
+func GetCachedValue(root *store.RootStore, key []byte) *rabbit.CachedValue {
+	bz := root.Get(key)
+	if len(bz) == 0 {
+		fmt.Printf("Cannot find account %#v\n", key)
+		return nil
+	}
+	return rabbit.BytesToCachedValue(bz)
+}
+
 func (job *Job) executeTx(root *store.RootStore, tx Tx) {
 	var fromAcc, toAcc Account
-	fromShortKey := getShortKey(tx.FromNum)
-	toShortKey := getShortKey(tx.ToNum)
-	root.PrepareForUpdate(fromShortKey)
-	fromAccBz := root.Get(fromShortKey)
-	if len(fromAccBz) == 0 {
-		fmt.Printf("Cannot find from-account")
+	root.PrepareForUpdate(tx.FromNum[:])
+	fromAccWrap := GetCachedValue(root, tx.FromNum[:])
+	if fromAccWrap == nil {
+		fmt.Printf("Cannot find from-account %#v\n", tx.FromNum)
 		return
 	}
-	root.PrepareForUpdate(toShortKey)
-	toAccBz := root.Get(toShortKey)
-	if len(toAccBz) == 0 {
-		fmt.Printf("Cannot find to-account")
+	root.PrepareForUpdate(tx.ToNum[:])
+	toAccWrap := GetCachedValue(root, tx.ToNum[:])
+	if toAccWrap == nil {
+		fmt.Printf("Cannot find to-account %#v\n", tx.ToNum)
 		return
 	}
-	fromAcc.FromBytes(fromAccBz)
-	toAcc.FromBytes(toAccBz)
+	fromAcc.FromBytes(fromAccWrap.GetValue())
+	toAcc.FromBytes(toAccWrap.GetValue())
 	fromIdx := fromAcc.Find(tx.CoinID)
 	if fromIdx < 0 {
-		fmt.Printf("Cannot find the token in from-account")
+		fmt.Printf("Cannot find the token in from-account\n")
 		return
 	}
 	toIdx := toAcc.Find(tx.CoinID)
 	if toIdx < 0 {
-		fmt.Printf("Cannot find the token in to-account")
+		fmt.Printf("Cannot find the token in to-account\n")
 		return
 	}
-	amount := int64(tx.Amount)
+	amount := int64(binary.LittleEndian.Uint64(tx.Amount[:]))
 	if amount < 0 {
 		amount = -amount
 	}
@@ -162,27 +180,54 @@ func (job *Job) executeTx(root *store.RootStore, tx Tx) {
 	nativeTokenAmount.Sub(nativeTokenAmount, gas)
 	fromAcc.SetNativeAmount(BigIntToBytes(nativeTokenAmount))
 	fromAcc.SetSequence(fromAcc.GetSequence()+1)
-	job.changedAccList = append(job.changedAccList, AccountAndNum{fromAcc, tx.FromNum})
-	job.changedAccList = append(job.changedAccList, AccountAndNum{toAcc, tx.ToNum})
+	fromAccWrap.SetValue(&fromAcc)
+	toAccWrap.SetValue(&toAcc)
+	job.changedAccList = append(job.changedAccList, AccountAndNum{fromAccWrap, tx.FromNum})
+	job.changedAccList = append(job.changedAccList, AccountAndNum{toAccWrap, tx.ToNum})
 }
 
-func RunTx(numEpoch int, txFile string) {
+func RunTx(numBlock int, txFile string) {
 	fin, err := os.Open(txFile)
 	if err != nil {
 		panic(err)
 	}
+	defer fin.Close()
+	ch := make(chan *Block, 2)
+	go func() {
+		for i := 0; i < numBlock; i++ {
+			var block Block
+			for j := 0; j < NumEpochInBlock; j++ {
+				block.epochList[j] = ReadEpoch(fin)
+			}
+			ch <- &block
+		}
+	}()
 
+	fmt.Printf("Start %f\n", float64(time.Now().UnixNano())/1e9)
 	okv, err := onvakv.NewOnvaKV("./onvakv4test", false, [][]byte{GuardStart, GuardEnd})
 	if err != nil {
 		panic(err)
 	}
-	for i := 0; i < numEpoch / NumEpochInBlock; i++ {
-		root := store.NewRootStore(okv, nil, nil)
+	fmt.Printf("Loaded %f\n", float64(time.Now().UnixNano())/1e9)
+	root := store.NewRootStore(okv, nil, nil)
+	for i := 0; i < numBlock; i++ {
+		fmt.Printf("block %d\n", i)
+		root.SetHeight(int64(i))
+		block := <-ch
 		for j := 0; j < NumEpochInBlock; j++ {
-			epoch := ReadEpoch(fin)
-			epoch.Run(root)
+			block.epochList[j].Run(root)
 		}
-		root.Close()
+		root.BeginWrite()
+		for j := 0; j < NumEpochInBlock; j++ {
+			for k := 0; k < NumWorkers; k++ {
+				for _, accAndNum := range block.epochList[j].jobList[k].changedAccList {
+					root.Set(accAndNum.num[:], accAndNum.acc.ToBytes())
+				}
+			}
+		}
+		root.EndWrite()
 	}
+	root.Close()
+	fmt.Printf("Finished %f\n", float64(time.Now().UnixNano())/1e9)
 }
 

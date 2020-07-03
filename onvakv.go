@@ -253,7 +253,7 @@ func (okv *OnvaKV) getPrevEntry(k []byte) *Entry {
 	iter := okv.idxTree.ReverseIterator([]byte{}, k)
 	defer iter.Close()
 	if !iter.Valid() {
-		panic("The iterator is invalid! Missing a guard node?")
+		panic(fmt.Sprintf("The iterator is invalid! Missing a guard node? k=%#v", k))
 	}
 	pos := iter.Value()
 	//fmt.Printf("In getPrevEntry: %#v %d\n", iter.Key(), iter.Value())
