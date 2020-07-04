@@ -20,7 +20,7 @@ import (
 const (
 	defaultFileSize = 1024*1024*1024
 	StartReapThres int64 = 10000 // 1000 * 1000
-	KeptEntriesToActiveEntriesRatio = 3
+	KeptEntriesToActiveEntriesRatio = 2
 )
 
 type OnvaKV struct {

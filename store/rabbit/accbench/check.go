@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	WithRabbit = false
+	WithRabbit = true
 )
 
 func CheckAccountsInBlock(snList []uint32, root *store.RootStore) {

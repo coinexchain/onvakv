@@ -13,8 +13,6 @@ import (
 	"github.com/coinexchain/randsrc"
 	"github.com/mmcloughlin/meow"
 
-	"github.com/coinexchain/onvakv"
-	"github.com/coinexchain/onvakv/store"
 	"github.com/coinexchain/onvakv/store/rabbit"
 )
 
@@ -104,12 +102,12 @@ func GenerateTx(totalAccounts uint64, addr2num map[[AddrLen]byte]uint64, rs rand
 }
 
 func RunGenerateTxFile(epochCount int, totalAccounts uint64, jsonFilename, randFilename, outFilename string) {
-	okv, err := onvakv.NewOnvaKV("./onvakv4test", false, [][]byte{GuardStart, GuardEnd})
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("Loaded %f\n", float64(time.Now().UnixNano())/1e9)
-	root := store.NewRootStore(okv, nil, nil)
+	fmt.Printf("Start %f\n", float64(time.Now().UnixNano())/1e9)
+	//okv, err := onvakv.NewOnvaKV("./onvakv4test", false, [][]byte{GuardStart, GuardEnd})
+	//if err != nil {
+	//	panic(err)
+	//}
+	//root := store.NewRootStore(okv, nil, nil)
 
 	jsonFile, err := os.Open(jsonFilename)
 	if err != nil {
@@ -148,14 +146,14 @@ func RunGenerateTxFile(epochCount int, totalAccounts uint64, jsonFilename, randF
 				tx = GenerateTx(totalAccounts, addr2num, rs)
 			}
 
-			bz := root.Get(tx.FromNum[:])
-			if len(bz) == 0 {
-				panic(fmt.Sprintf("tx.FromNum[:] not found %#v", tx.FromNum[:]))
-			}
-			bz = root.Get(tx.ToNum[:])
-			if len(bz) == 0 {
-				panic(fmt.Sprintf("tx.FromNum[:] not found %#v", tx.ToNum[:]))
-			}
+			//bz := root.Get(tx.FromNum[:])
+			//if len(bz) == 0 {
+			//	panic(fmt.Sprintf("tx.FromNum[:] not found %#v", tx.FromNum[:]))
+			//}
+			//bz = root.Get(tx.ToNum[:])
+			//if len(bz) == 0 {
+			//	panic(fmt.Sprintf("tx.FromNum[:] not found %#v", tx.ToNum[:]))
+			//}
 
 			_, fromConflict := touchedNum[tx.FromNum]
 			_, toConflict := touchedNum[tx.ToNum]
@@ -182,5 +180,6 @@ func RunGenerateTxFile(epochCount int, totalAccounts uint64, jsonFilename, randF
 			panic(err)
 		}
 	}
+	fmt.Printf("Finished %f\n", float64(time.Now().UnixNano())/1e9)
 }
 

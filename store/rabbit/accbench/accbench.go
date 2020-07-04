@@ -9,8 +9,8 @@ import (
 func printUsage() {
 	fmt.Printf("Usage: %s genacc <number-of-accounts>\n", os.Args[0])
 	fmt.Printf("Usage: %s checkacc <number-of-accounts>\n", os.Args[0])
-	fmt.Printf("Usage: %s gentx <number-of-accounts> <number-of-epoches>\n", os.Args[0])
-	fmt.Printf("Usage: %s runtx <number-of-epoches>\n", os.Args[0])
+	fmt.Printf("Usage: %s gentx <number-of-accounts> <number-of-blocks>\n", os.Args[0])
+	fmt.Printf("Usage: %s runtx <number-of-blocks>\n", os.Args[0])
 }
 
 func main() {
@@ -69,21 +69,21 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		numEpoch, err := strconv.Atoi(os.Args[3])
+		numBlock, err := strconv.Atoi(os.Args[3])
 		if err != nil {
 			panic(err)
 		}
-		RunGenerateTxFile(numEpoch, uint64(numAccounts), "shortkey.json", randFilename, "tx.dat")
+		RunGenerateTxFile(numBlock*NumEpochInBlock, uint64(numAccounts), "shortkey.json", randFilename, "tx.dat")
 	}
 	if os.Args[1] == "runtx" {
 		if len(os.Args) != 3 {
 			printUsage()
 			return
 		}
-		numEpoch, err := strconv.Atoi(os.Args[2])
+		numBlock, err := strconv.Atoi(os.Args[2])
 		if err != nil {
 			panic(err)
 		}
-		RunTx(numEpoch, "tx.dat")
+		RunTx(numBlock, "tx.dat")
 	}
 }

@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	MinimumJobsInGoroutine = 100
+	MinimumJobsInGoroutine = 20
 	MaximumGoroutines      = 16
 )
 
