@@ -1,9 +1,9 @@
 module github.com/coinexchain/onvakv
 
-go 1.13
+go 1.14
 
 require (
-	github.com/coinexchain/randsrc v0.1.0
+	github.com/coinexchain/randsrc v0.2.0
 	github.com/dterei/gotsc v0.0.0-20160722215413-e78f872945c6
 	github.com/minio/sha256-simd v0.1.1
 	github.com/mmcloughlin/meow v0.0.0-20181112033425-871e50784daf
@@ -12,4 +12,3 @@ require (
 	github.com/tendermint/tm-db v0.2.0
 )
 
-replace github.com/coinexchain/randsrc => ../randsrc
