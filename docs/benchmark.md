@@ -23,7 +23,7 @@ The test results are shown below:
 | ETH-MPT         |                       17536 |                     55060 |                     114.5 |                  149.3 |
 | Tendermint-iavl |                      222806 |                     92025 |                     453.5 |                  355.8 |
 
-GoLevelDB and OnvaKV are roughly 1~2 orders faster than MPT, and 2~3 orders faster than IAVL. They are faster in reading partly because their databases are smaller, and the OS can use DRAM to cache most (if not all) of the database. Even though OnvaKV's database is larger than GoLevelDB, its read performance is far better than GoLevelDB. 
+GoLevelDB and OnvaKV are roughly 1\~2 orders faster than MPT, and 2\~3 orders faster than IAVL. They are faster in reading partly because their databases are smaller, and the OS can use DRAM to cache most (if not all) of the database. Even though OnvaKV's database is larger than GoLevelDB, its read performance is far better than GoLevelDB. 
 
 The code for testing can be found at https://github.com/coinexchain/ADS-benchmark and https://github.com/coinexchain/onvakv/tree/master/store/rabbit/rwbench.
 
