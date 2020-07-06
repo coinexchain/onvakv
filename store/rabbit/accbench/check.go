@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"bufio"
 	"fmt"
+	"encoding/binary"
+	"os"
 	"sync"
 	"time"
 
@@ -113,6 +116,35 @@ func GenerateRandomSNList(numAccounts int, rs randsrc.RandSrc) []uint32 {
 	return snList
 }
 
+func DumpRandomSNList(snList []uint32) {
+	out, err := os.Create("randomlist.dat")
+	if err != nil {
+		panic(err)
+	}
+	defer out.Close()
+	outWr := bufio.NewWriterSize(out, 1024*1024*16)
+	for _, sn := range snList {
+		var buf [4]byte
+		binary.LittleEndian.PutUint32(buf[:], sn)
+		_, err := outWr.Write(buf[:])
+		if err != nil {
+			panic(err)
+		}
+	}
+	err = outWr.Flush()
+}
+
+func ReadOneBlockOfAccounts(f *os.File, n int) (res [NumNewAccountsInBlock]uint32) {
+	f.Seek(int64(n*NumNewAccountsInBlock), os.SEEK_SET)
+	fin := bufio.NewReaderSize(f, 1024*1024*16)
+	for i := range res {
+		var buf [4]byte
+		fin.Read(buf[:])
+		res[i] = binary.LittleEndian.Uint32(buf[:])
+	}
+	return
+}
+
 func RunCheckAccounts(numAccounts int, randFilename string) {
 	fmt.Printf("Start %f\n", float64(time.Now().UnixNano())/1000000000.0)
 	rs := randsrc.NewRandSrcFromFile(randFilename)
@@ -122,7 +154,12 @@ func RunCheckAccounts(numAccounts int, randFilename string) {
 	}
 	root := store.NewRootStore(okv, nil, nil)
 
-	snList := GenerateRandomSNList(numAccounts, rs)
+	DumpRandomSNList(GenerateRandomSNList(numAccounts, rs))
+	f, err := os.Open("randomlist.dat")
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
 
 	fmt.Printf("After Load %f\n", float64(time.Now().UnixNano())/1000000000.0)
 	if numAccounts % NumNewAccountsInBlock != 0 {
@@ -134,7 +171,8 @@ func RunCheckAccounts(numAccounts int, randFilename string) {
 		if i % 100 == 0 {
 			fmt.Printf("Now %d of %d, %d\n", i, numBlocks, root.ActiveCount())
 		}
-		CheckAccountsInBlock(snList[i*NumNewAccountsInBlock:(i+1)*NumNewAccountsInBlock], root)
+		snList := ReadOneBlockOfAccounts(f, i)
+		CheckAccountsInBlock(snList[:], root)
 	}
 	fmt.Printf("Read Finished %f\n", float64(time.Now().UnixNano())/1000000000.0)
 

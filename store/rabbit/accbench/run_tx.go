@@ -17,7 +17,7 @@ import (
 
 const (
 	NumTxInEpoch = 1024
-	NumWorkers = 64
+	NumWorkers = 128
 	NumTxPerWorker =  NumTxInEpoch / NumWorkers
 	NumEpochInBlock = 32
 )
