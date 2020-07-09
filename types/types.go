@@ -9,6 +9,12 @@ type Entry struct {
 	SerialNum  int64
 }
 
+type EntryX struct {
+	Entry           *Entry
+	Pos             int64
+	DeactivedSNList []int64
+}
+
 type OperationOnEntry int32
 
 const (
@@ -56,7 +62,7 @@ type DataTree interface {
 	GetActiveBit(sn int64) bool
 	EvictTwig(twigID int64)
 	GetActiveEntriesInTwig(twigID int64) []*Entry
-	ScanEntries(oldestActiveTwigID int64, handler EntryHandler)
+	ScanEntries(oldestActiveTwigID int64, outChan chan EntryX)
 	TwigCanBePruned(twigID int64) bool
 	PruneTwigs(startID, endID int64) []byte
 	GetFileSizes() (int64, int64)

@@ -11,6 +11,8 @@ import (
 	"sort"
 
 	"github.com/mmcloughlin/meow"
+
+	"github.com/coinexchain/onvakv/types"
 )
 
 func LoadTwigFromFile(infile io.Reader) (twigID int64, twig Twig, err error) {
@@ -332,13 +334,7 @@ func (tree *Tree) RecoverEntry(pos int64, entry *Entry, deactivedSNList []int64,
 	}
 }
 
-type EntryX struct {
-	entry           *Entry
-	pos             int64
-	deactivedSNList []int64
-}
-
-func (tree *Tree) ScanEntries(oldestActiveTwigID int64, outChan chan EntryX) {
+func (tree *Tree) ScanEntries(oldestActiveTwigID int64, outChan chan types.EntryX) {
 	pos := tree.twigMtFile.GetFirstEntryPos(oldestActiveTwigID)
 	size := tree.entryFile.Size()
 	//fmt.Printf("entryFile.Size() %d\n", size)
@@ -349,17 +345,17 @@ func (tree *Tree) ScanEntries(oldestActiveTwigID int64, outChan chan EntryX) {
 		//		fmt.Printf("Now handle %d pos %d nextPos %d\n", entry.SerialNum, pos, nextPos)
 		//	}
 		//}
-		outChan <- EntryX{entry, pos, deactivedSNList}
+		outChan <- types.EntryX{entry, pos, deactivedSNList}
 		pos = nextPos
 	}
 	close(outChan)
 }
 
 func (tree *Tree) RecoverActiveTwigs(oldestActiveTwigID int64) []int64 {
-	entryXChan := make(chan EntryX, 100)
+	entryXChan := make(chan types.EntryX, 100)
 	go tree.ScanEntries(oldestActiveTwigID, entryXChan)
 	for e := range entryXChan {
-		tree.RecoverEntry(e.pos, e.entry, e.deactivedSNList, oldestActiveTwigID)
+		tree.RecoverEntry(e.Pos, e.Entry, e.DeactivedSNList, oldestActiveTwigID)
 	}
 	tree.syncMT4YoungestTwig()
 	//fmt.Printf("RecoverActiveTwigs touchedPosOf512b %v\n", tree.touchedPosOf512b)

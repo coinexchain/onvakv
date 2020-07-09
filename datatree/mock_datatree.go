@@ -72,7 +72,7 @@ func (dt *MockDataTree) GetActiveEntriesInTwig(twigID int64) []*Entry {
 	return res
 }
 
-func (dt *MockDataTree) ScanEntries(oldestActiveTwigID int64, handler types.EntryHandler) {
+func (dt *MockDataTree) ScanEntries(oldestActiveTwigID int64, outChan chan types.EntryX) {
 	panic(fmt.Sprintf("ScanEntries not implemented. oldestActiveTwigID=%d", oldestActiveTwigID))
 }
 

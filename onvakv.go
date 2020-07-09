@@ -120,9 +120,11 @@ func NewOnvaKV(dirName string, queryHistory bool, startEndKeys [][]byte) (*OnvaK
 		okv.idxTree = indextree.NewNVTreeMem(nil)
 		oldestActiveTwigID := okv.meta.GetOldestActiveTwigID()
 		okv.idxTree.BeginWrite(0) // we set height=0 here, which will not be used 
-		okv.datTree.ScanEntries(oldestActiveTwigID, func(pos int64, entry *Entry, _ []int64) {
-			okv.idxTree.Set(entry.Key, uint64(pos))
-		})
+		entryXChan := make(chan types.EntryX, 100)
+		go okv.datTree.ScanEntries(oldestActiveTwigID, entryXChan)
+		for e := range entryXChan {
+			okv.idxTree.Set(e.Entry.Key, uint64(e.Pos))
+		}
 		okv.idxTree.EndWrite()
 	}
 
