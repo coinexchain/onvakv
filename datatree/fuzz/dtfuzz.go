@@ -228,7 +228,7 @@ func (ctx *Context) endBlock() {
 }
 
 func (ctx *Context) reloadTree() {
-	ctx.tree.Sync()
+	ctx.tree.Flush()
 	tree1 := datatree.LoadTree(defaultFileSize, dirName)
 
 	datatree.CompareTreeTwigs(ctx.tree, tree1)
@@ -239,7 +239,7 @@ func (ctx *Context) reloadTree() {
 }
 
 func (ctx *Context) recoverTree() {
-	ctx.tree.Sync()
+	ctx.tree.Flush()
 	tree1 := datatree.RecoverTree(defaultFileSize, dirName,
 		ctx.edgeNodes, ctx.lastPrunedTwigID, ctx.oldestActiveTwigID, ctx.serialNum >> datatree.TwigShift)
 

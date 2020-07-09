@@ -42,3 +42,4 @@ datatree/a.sh
 store/rabbit/rwbench/rwbench
 store/rabbit/accbench/accbench
 *.json
+*.new

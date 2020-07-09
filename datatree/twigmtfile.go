@@ -18,7 +18,7 @@ func NewTwigMtFile(bufferSize, blockSize int, dirName string) (res TwigMtFile, e
 }
 
 const TwigMtEntryCount = 4095
-const TwigMtSize = 12 + TwigMtEntryCount*36
+const TwigMtSize = 12 + TwigMtEntryCount*32
 
 func (tf *TwigMtFile) AppendTwig(mtree [][32]byte, firstEntryPos int64) {
 	if firstEntryPos < 0 {
@@ -36,9 +36,7 @@ func (tf *TwigMtFile) AppendTwig(mtree [][32]byte, firstEntryPos int64) {
 		panic(err)
 	}
 	for i := 0; i < len(mtree); i++ { // 4095 iterations
-		h = meow.New32(0)
-		h.Write(mtree[i][:])
-		_, err := tf.HPFile.Append([][]byte{mtree[i][:], h.Sum(nil)}) // 32+4 bytes
+		_, err := tf.HPFile.Append([][]byte{mtree[i][:]}) // 32 bytes
 		if err != nil {
 			panic(err)
 		}
@@ -60,21 +58,16 @@ func (tf *TwigMtFile) GetFirstEntryPos(twigID int64) int64 {
 }
 
 func (tf *TwigMtFile) GetHashNode(twigID int64, hashID int) []byte {
-	var buf [36]byte
+	var buf [32]byte
 	if hashID <= 0 || hashID >= 4096 {
 		panic(fmt.Sprintf("Invalid hashID: %d", hashID))
 	}
-	offset := twigID*int64(TwigMtSize) + 12 + (int64(hashID)-1)*36
+	offset := twigID*int64(TwigMtSize) + 12 + (int64(hashID)-1)*32
 	err := tf.HPFile.ReadAt(buf[:], offset)
 	if err != nil {
 		panic(err)
 	}
-	h := meow.New32(0)
-	h.Write(buf[:32])
-	if !bytes.Equal(buf[32:], h.Sum(nil)) {
-		panic("Checksum Error!")
-	}
-	return buf[:32]
+	return buf[:]
 }
 
 func (tf *TwigMtFile) Size() int64 {
@@ -87,11 +80,11 @@ func (tf *TwigMtFile) Truncate(size int64) {
 	}
 	return
 }
-func (tf *TwigMtFile) Sync() {
-	err := tf.HPFile.Sync()
-	if err != nil {
-		panic(err)
-	}
+func (tf *TwigMtFile) Flush() {
+	tf.HPFile.Flush()
+}
+func (tf *TwigMtFile) FlushAsync() {
+	tf.HPFile.FlushAsync()
 }
 func (tf *TwigMtFile) Close() {
 	err := tf.HPFile.Close()

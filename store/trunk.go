@@ -3,8 +3,16 @@ package store
 import (
 	"sync/atomic"
 
+	"github.com/dterei/gotsc"
+
 	"github.com/coinexchain/onvakv/store/types"
 )
+
+var PhaseTrunkTime, PhaseEndWriteTime, tscOverhead uint64
+
+func init() {
+	tscOverhead = gotsc.TSCOverhead()
+}
 
 // We use a new TrunkStore for every block
 type TrunkStore struct {
@@ -118,6 +126,7 @@ func (ts *TrunkStore) ReverseIterator(start, end []byte) types.ObjIterator {
 }
 
 func (ts *TrunkStore) writeBack() {
+	//@ start := gotsc.BenchStart()
 	if atomic.AddInt64(&ts.isWriting, 1) != 1 {
 		panic("Conflict During Writing")
 	}
@@ -133,7 +142,10 @@ func (ts *TrunkStore) writeBack() {
 			}
 		}
 	})
+	//@ PhaseTrunkTime += gotsc.BenchEnd() - start - tscOverhead
+	//@ start = gotsc.BenchStart()
 	ts.root.EndWrite()
+	//@ PhaseEndWriteTime += gotsc.BenchEnd() - start - tscOverhead
 	if atomic.AddInt64(&ts.isWriting, -1) != 0 {
 		panic("Conflict During Writing")
 	}

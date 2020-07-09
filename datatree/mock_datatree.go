@@ -96,5 +96,5 @@ func (dt *MockDataTree) EndBlock() []byte {
 func (dt *MockDataTree) Close() {
 }
 
-func (dt *MockDataTree) Sync() {
+func (dt *MockDataTree) Flush() {
 }

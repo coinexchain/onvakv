@@ -6,11 +6,13 @@ import (
 	"math/big"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mmcloughlin/meow"
 
 	"github.com/coinexchain/onvakv"
+	"github.com/coinexchain/onvakv/datatree"
 	"github.com/coinexchain/onvakv/store"
 	"github.com/coinexchain/onvakv/store/rabbit"
 )
@@ -23,11 +25,12 @@ const (
 )
 
 type Block struct {
-	epochList [NumEpochInBlock]Epoch
+	epochList [NumEpochInBlock]*Epoch
 }
 
 type Epoch struct {
-	jobList [NumWorkers]Job
+	jobList [NumWorkers]*Job
+	txList  [NumTxInEpoch]Tx
 }
 
 type AccountAndNum struct {
@@ -36,13 +39,14 @@ type AccountAndNum struct {
 }
 
 type Job struct {
-	txList         [NumTxPerWorker]Tx
 	changedAccList []AccountAndNum
 }
 
-func ReadEpoch(fin *os.File) (epoch Epoch) {
+func ReadEpoch(fin *os.File) *Epoch {
+	epoch := &Epoch{}
 	hash64 := meow.New64(0)
 	for i := 0; i < NumWorkers; i++ {
+		epoch.jobList[i] = &Job{}
 		for j := 0; j < NumTxPerWorker; j++ {
 			var bz [TxLen]byte
 			_, err := fin.Read(bz[:])
@@ -50,7 +54,7 @@ func ReadEpoch(fin *os.File) (epoch Epoch) {
 				panic(err)
 			}
 			tx := ParseTx(bz)
-			epoch.jobList[i].txList[j] = tx
+			epoch.txList[i*NumTxPerWorker+j] = tx
 			tx.UpdateHash64(hash64)
 		}
 		epoch.jobList[i].changedAccList = make([]AccountAndNum, 0, 2*NumTxPerWorker)
@@ -63,22 +67,20 @@ func ReadEpoch(fin *os.File) (epoch Epoch) {
 	if hash64.Sum64() != binary.LittleEndian.Uint64(buf[:]) {
 		panic("Epoch checksum error!")
 	}
-	return
+	return epoch
 }
 
 func (epoch Epoch) Check() bool {
 	touchedNum := make(map[[rabbit.KeySize]byte]struct{}, 2*NumTxInEpoch)
-	for i := 0; i < NumWorkers; i++ {
-		for j := 0; j < NumTxPerWorker; j++ {
-			tx := epoch.jobList[i].txList[j]
-			_, fromConflict := touchedNum[tx.FromNum]
-			_, toConflict := touchedNum[tx.ToNum]
-			if fromConflict || toConflict {
-				return false
-			}
-			touchedNum[tx.FromNum] = struct{}{}
-			touchedNum[tx.ToNum] = struct{}{}
+	for i := 0; i < NumTxInEpoch; i++ {
+		tx := epoch.txList[i]
+		_, fromConflict := touchedNum[tx.FromNum]
+		_, toConflict := touchedNum[tx.ToNum]
+		if fromConflict || toConflict {
+			return false
 		}
+		touchedNum[tx.FromNum] = struct{}{}
+		touchedNum[tx.ToNum] = struct{}{}
 	}
 	return true
 }
@@ -86,17 +88,19 @@ func (epoch Epoch) Check() bool {
 func (epoch Epoch) Run(root *store.RootStore) {
 	var wg sync.WaitGroup
 	isValid := true
-	wg.Add(1+len(epoch.jobList))
+	wg.Add(1)
 	go func() {
 		isValid = epoch.Check()
 		wg.Done()
 	}()
-	for i := range epoch.jobList {
-		go func(i int) {
-			epoch.jobList[i].Run(root)
-			wg.Done()
-		}(i)
-	}
+	sharedIdx := int64(-1)
+	datatree.ParrallelRun(NumWorkersInBlock, func(jobID int) {
+		for {
+			myIdx := atomic.AddInt64(&sharedIdx, 1)
+			if myIdx >= int64(len(epoch.txList)) {break}
+			epoch.jobList[jobID].executeTx(root, epoch.txList[myIdx])
+		}
+	})
 	wg.Wait()
 	if !isValid {
 		fmt.Printf("Found an invalid epoch!")
@@ -108,12 +112,6 @@ func getShortKey(n uint64) []byte {
 	var shortKey [rabbit.KeySize]byte
 	binary.LittleEndian.PutUint64(shortKey[:], n)
 	return shortKey[:]
-}
-
-func (job *Job) Run(root *store.RootStore) {
-	for _, tx := range job.txList {
-		job.executeTx(root, tx)
-	}
 }
 
 func GetCachedValue(root *store.RootStore, key []byte) *rabbit.CachedValue {

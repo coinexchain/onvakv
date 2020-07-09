@@ -11,8 +11,6 @@ import (
 	"sort"
 
 	"github.com/mmcloughlin/meow"
-
-	"github.com/coinexchain/onvakv/types"
 )
 
 func LoadTwigFromFile(infile io.Reader) (twigID int64, twig Twig, err error) {
@@ -190,9 +188,9 @@ func (tree *Tree) LoadMtree4YT(infile io.Reader) error {
 }
 
 
-func (tree *Tree) Sync() {
-	tree.entryFile.Sync()
-	tree.twigMtFile.Sync()
+func (tree *Tree) Flush() {
+	tree.entryFile.Flush()
+	tree.twigMtFile.Flush()
 
 	twigList := make([]int64, 0, len(tree.activeTwigs))
 	for twigID := range tree.activeTwigs {
@@ -334,9 +332,16 @@ func (tree *Tree) RecoverEntry(pos int64, entry *Entry, deactivedSNList []int64,
 	}
 }
 
-func (tree *Tree) ScanEntries(oldestActiveTwigID int64, handler types.EntryHandler) {
+type EntryX struct {
+	entry           *Entry
+	pos             int64
+	deactivedSNList []int64
+}
+
+func (tree *Tree) ScanEntries(oldestActiveTwigID int64, outChan chan EntryX) {
 	pos := tree.twigMtFile.GetFirstEntryPos(oldestActiveTwigID)
 	size := tree.entryFile.Size()
+	//fmt.Printf("entryFile.Size() %d\n", size)
 	for pos < size {
 		entry, deactivedSNList, nextPos := tree.entryFile.ReadEntry(pos)
 		//if Debug {
@@ -344,15 +349,18 @@ func (tree *Tree) ScanEntries(oldestActiveTwigID int64, handler types.EntryHandl
 		//		fmt.Printf("Now handle %d pos %d nextPos %d\n", entry.SerialNum, pos, nextPos)
 		//	}
 		//}
-		handler(pos, entry, deactivedSNList)
+		outChan <- EntryX{entry, pos, deactivedSNList}
 		pos = nextPos
 	}
+	close(outChan)
 }
 
 func (tree *Tree) RecoverActiveTwigs(oldestActiveTwigID int64) []int64 {
-	tree.ScanEntries(oldestActiveTwigID, func(pos int64, entry *Entry, deactivedSNList []int64) {
-		tree.RecoverEntry(pos, entry, deactivedSNList, oldestActiveTwigID)
-	})
+	entryXChan := make(chan EntryX, 100)
+	go tree.ScanEntries(oldestActiveTwigID, entryXChan)
+	for e := range entryXChan {
+		tree.RecoverEntry(e.pos, e.entry, e.deactivedSNList, oldestActiveTwigID)
+	}
 	tree.syncMT4YoungestTwig()
 	//fmt.Printf("RecoverActiveTwigs touchedPosOf512b %v\n", tree.touchedPosOf512b)
 	idList := make([]int, 0, len(tree.activeTwigs))

@@ -518,7 +518,7 @@ func TestTreeAppendEntry(t *testing.T) {
 		assert.Equal(t, activeList[i], entry.SerialNum)
 	}
 
-	tree.Sync()
+	tree.Flush()
 	tree.Close()
 	os.RemoveAll(dirName)
 }

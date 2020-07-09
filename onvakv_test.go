@@ -91,10 +91,9 @@ func EntryToStr(e *Entry) string {
 }
 
 func Test1(t *testing.T) {
-	okv := NewOnvaKV4Mock()
 	first := []byte{0}
 	last := []byte{255,255,255,255,255,255}
-	okv.InitGuards(first, last)
+	okv := NewOnvaKV4Mock([][]byte{first, last})
 	e := okv.GetEntry(first)
 	assert.Equal(t, "K:\x00 nK:[]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}(6) V: H:-1 LH:-1 SN:0", EntryToStr(e))
 	e = okv.GetEntry(last)

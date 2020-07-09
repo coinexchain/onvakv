@@ -70,7 +70,7 @@ func TestEntryFile(t *testing.T) {
 		//fmt.Printf("pos for 3: %d\n", ef.Append(bz3))
 	}
 
-	ef.Sync()
+	ef.Flush()
 	ef.Close()
 
 	ef, err = NewEntryFile(8*1024, 128*1024/*128KB*/, "./entryF")

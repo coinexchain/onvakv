@@ -49,7 +49,7 @@ func TestHPFile(t *testing.T) {
 	assert.Equal(t, nil, err)
 	assert.Equal(t, slice0, check0)
 
-	hpfile.Sync()
+	hpfile.Flush()
 
 	check1 := make([]byte, len(slice1))
 	err = hpfile.ReadAt(check1, 44)
@@ -67,7 +67,7 @@ func TestHPFile(t *testing.T) {
 	assert.Equal(t, int64(120), pos)
 	assert.Equal(t, int64(136), hpfile.Size())
 
-	hpfile.Sync()
+	hpfile.Flush()
 	hpfile.Close()
 
 	hpfile, err = NewHPFile(64, 128, "./test")
@@ -100,7 +100,7 @@ func TestHPFile(t *testing.T) {
 	err = hpfile.ReadAt(check3, 120)
 	assert.Equal(t, io.EOF, err)
 
-	hpfile.Sync()
+	hpfile.Flush()
 	hpfile.Close()
 
 	f, err := os.OpenFile("./test/haha", os.O_RDWR|os.O_CREATE, 0700)

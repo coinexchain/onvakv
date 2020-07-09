@@ -61,7 +61,7 @@ type DataTree interface {
 	PruneTwigs(startID, endID int64) []byte
 	GetFileSizes() (int64, int64)
 	EndBlock() []byte
-	Sync()
+	Flush()
 	Close()
 }
 

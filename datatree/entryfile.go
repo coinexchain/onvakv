@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/mmcloughlin/meow"
-
 	"github.com/coinexchain/onvakv/types"
 )
 
@@ -46,7 +44,6 @@ func NullEntry() Entry {
 // magicBytesPos(list of 32b-int, -1 for ending), posistions are relative to the end of 32b-totalLength
 // normalPayload
 // DeactivedSerialNumList (list of 64b-int, -1 for ending)
-// 32b-checksum
 // padding-zero-bytes
 
 const MSB32 = uint32(1<<31)
@@ -199,25 +196,23 @@ func (ef *EntryFile) readMagicBytesAndLength(off int64) (lengthInt int64, length
 }
 
 func getNextPos(off, length int64) int64 {
+	length += 8 /*magicbytes*/ + 4 /*length*/
 	paddingSize := getPaddingSize(int(length))
-	return off + 8 /*magicbytes*/ + 4 /*length*/ + int64(length) + 4 /*checksum*/ + int64(paddingSize)
+	paddedLen := length + int64(paddingSize)
+	nextPos := off + paddedLen
+	//fmt.Printf("off %d length %d paddingSize %d paddedLen %d nextPos %d\n", off, length, paddingSize, paddedLen, nextPos)
+	return nextPos
+
 }
 
 func (ef *EntryFile) ReadEntry(off int64) (*Entry, []int64, int64) {
-	length, lenBytes := ef.readMagicBytesAndLength(off)
-	h := meow.New32(0)
-	h.Write(lenBytes)
-	paddingSize := getPaddingSize(int(length))
+	length, _ := ef.readMagicBytesAndLength(off)
 	nextPos := getNextPos(off, int64(length))
-	b := make([]byte, 12+int(length)+4+paddingSize) // include 12 (magicbytes and length)
+	b := make([]byte, 12+int(length)) // include 12 (magicbytes and length)
 	err := ef.HPFile.ReadAt(b, off)
 	b = b[12:] // ignore magicbytes and length
 	if err != nil {
 		panic(err)
-	}
-	h.Write(b[:length])
-	if !bytes.Equal(b[length:length+4], h.Sum(nil)) {
-		panic("Checksum Error")
 	}
 	var n int
 	for n = 0; n < int(length); n += 4 { // recover magic bytes in payload
@@ -249,11 +244,11 @@ func (ef *EntryFile) Truncate(size int64) {
 		panic(err)
 	}
 }
-func (ef *EntryFile) Sync() {
-	err := ef.HPFile.Sync()
-	if err != nil {
-		panic(err)
-	}
+func (ef *EntryFile) Flush() {
+	ef.HPFile.Flush()
+}
+func (ef *EntryFile) FlushAsync() {
+	ef.HPFile.FlushAsync()
 }
 func (ef *EntryFile) Close() {
 	err := ef.HPFile.Close()
@@ -267,14 +262,13 @@ func (ef *EntryFile) PruneHead(off int64) {
 		panic(err)
 	}
 }
+
 func (ef *EntryFile) Append(b []byte) (pos int64) {
-	var bb [4][]byte
+	var bb [3][]byte
 	bb[0] = MagicBytes[:]
 	bb[1] = b
-	h := meow.New32(0)
-	h.Write(b)
-	bb[2] = h.Sum(nil)
-	bb[3] = make([]byte, getPaddingSize(len(bb[1])+len(bb[2]))) // padding zero bytes
+	paddingSize := getPaddingSize(len(bb[1]))
+	bb[2] = make([]byte, paddingSize) // padding zero bytes
 	pos, err := ef.HPFile.Append(bb[:])
 	if pos%8 != 0 {
 		panic("Entries are not aligned")

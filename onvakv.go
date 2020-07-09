@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"math"
+	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	dbm "github.com/tendermint/tm-db"
-	//"github.com/dterei/gotsc"
+	"github.com/dterei/gotsc"
 
 	"github.com/coinexchain/onvakv/datatree"
 	"github.com/coinexchain/onvakv/indextree"
@@ -29,15 +31,16 @@ type OnvaKV struct {
 	datTree       types.DataTree
 	rocksdb       *indextree.RocksDB
 	rootHash      []byte
-	k2heMap       *sync.Map // key-to-hot-entry map
-	k2nkMap       *sync.Map // key-to-next-key map
+	k2heMap       *BucketMap // key-to-hot-entry map
+	k2nkMap       *BucketMap // key-to-next-key map
+	tempEntries64 [64][]*HotEntry
 	cachedEntries []*HotEntry
 	startKey      []byte
 	endKey        []byte
 }
 
 func NewOnvaKV4Mock(startEndKeys [][]byte) *OnvaKV {
-	okv := &OnvaKV{k2heMap: &sync.Map{}, k2nkMap: &sync.Map{}}
+	okv := &OnvaKV{k2heMap: NewBucketMap(), k2nkMap: NewBucketMap()}
 
 	okv.datTree = datatree.NewMockDataTree()
 	okv.idxTree = indextree.NewMockIndexTree()
@@ -55,13 +58,16 @@ func NewOnvaKV4Mock(startEndKeys [][]byte) *OnvaKV {
 }
 
 func NewOnvaKV(dirName string, queryHistory bool, startEndKeys [][]byte) (*OnvaKV, error) {
-	//tscOverhead = gotsc.TSCOverhead()
+	tscOverhead = gotsc.TSCOverhead()
 	_, err := os.Stat(dirName)
 	dirNotExists := os.IsNotExist(err)
 	okv := &OnvaKV{
-		k2heMap:      &sync.Map{},
-		k2nkMap:      &sync.Map{},
+		k2heMap:      NewBucketMap(),
+		k2nkMap:      NewBucketMap(),
 		cachedEntries: make([]*HotEntry, 0, 2000),
+	}
+	for i := range okv.tempEntries64 {
+		okv.tempEntries64[i] = make([]*HotEntry, 0, len(okv.cachedEntries)/8)
 	}
 	if dirNotExists {
 		os.Mkdir(dirName, 0700)
@@ -128,7 +134,7 @@ func (okv *OnvaKV) Close() {
 	okv.meta.SetIsRunning(false)
 	okv.idxTree.Close()
 	okv.rocksdb.Close()
-	okv.datTree.Sync()
+	okv.datTree.Flush()
 	okv.datTree.Close()
 	okv.meta.Close()
 	okv.idxTree = nil
@@ -277,29 +283,27 @@ func (okv *OnvaKV) BeginWrite(height int64) {
 }
 
 func (okv *OnvaKV) Set(key, value []byte) {
-	v, ok := okv.k2heMap.Load(string(key))
+	hotEntry, ok := okv.k2heMap.Load(string(key))
 	if !ok {
 		panic("Can not find entry in cache")
 	}
-	if v == nil {
+	if hotEntry == nil {
 		panic("Can not change or insert at a fake entry")
 	}
 	//fmt.Printf("In Set we see: %#v %#v\n", key, value)
-	hotEntry := v.(*HotEntry)
 	hotEntry.EntryPtr.Value = value
 	hotEntry.Operation = types.OpInsertOrChange
 }
 
 func (okv *OnvaKV) Delete(key []byte) {
 	//fmt.Printf("In Delete we see: %s(%#v)\n", string(key), key)
-	v, ok := okv.k2heMap.Load(string(key))
+	hotEntry, ok := okv.k2heMap.Load(string(key))
 	if !ok {
 		return // delete a non-exist kv pair
 	}
-	if v == nil {
+	if hotEntry == nil {
 		return // delete a non-exist kv pair
 	}
-	hotEntry := v.(*HotEntry)
 	hotEntry.Operation = types.OpDelete
 }
 
@@ -336,23 +340,30 @@ func getNext(cachedEntries []*HotEntry, i int) int {
 }
 
 func (okv *OnvaKV) update() {
-	okv.k2heMap.Range(func(key, value interface{}) bool {
-		hotEntry := value.(*HotEntry)
-		//fmt.Printf("HERE key: %#v HotEntry: %#v Entry: %#v\n", []byte(key.(string)), hotEntry, *(hotEntry.EntryPtr))
-		okv.cachedEntries = append(okv.cachedEntries, hotEntry)
-		return true
-	})
-	okv.k2nkMap.Range(func(key, value interface{}) bool {
-		kStr := key.(string)
-		if _, ok := okv.k2heMap.Load(kStr); !ok {
-			keyStr := kStr
-		        okv.cachedEntries = append(okv.cachedEntries, makeHintHotEntry(keyStr))
+	sharedIdx := int64(-1)
+	datatree.ParrallelRun(runtime.NumCPU(), func(workerID int) {
+		for {
+			myIdx := atomic.AddInt64(&sharedIdx, 1)
+			if myIdx >= 64 {break}
+			for _, e := range okv.k2heMap.maps[myIdx] {
+				okv.tempEntries64[myIdx] = append(okv.tempEntries64[myIdx], e)
+			}
+			for k := range okv.k2nkMap.maps[myIdx] {
+				if _, ok := okv.k2heMap.maps[myIdx][k]; ok {continue}
+				okv.tempEntries64[myIdx] = append(okv.tempEntries64[myIdx], makeHintHotEntry(k))
+			}
+			entries := okv.tempEntries64[myIdx]
+			sort.Slice(entries, func(i,j int) bool {
+				return bytes.Compare(entries[i].EntryPtr.Key, entries[j].EntryPtr.Key) < 0
+			})
 		}
-		return true
 	})
-	sort.Slice(okv.cachedEntries, func(i,j int) bool {
-		return bytes.Compare(okv.cachedEntries[i].EntryPtr.Key, okv.cachedEntries[j].EntryPtr.Key) < 0
-	})
+	//@ start := gotsc.BenchStart()
+	okv.cachedEntries = okv.cachedEntries[:0]
+	for _, entries := range okv.tempEntries64 {
+		okv.cachedEntries = append(okv.cachedEntries, entries...)
+	}
+	//@ Phase0Time += gotsc.BenchEnd() - start - tscOverhead
 	// set NextKey to correct values and mark IsModified
 	for i, hotEntry := range okv.cachedEntries {
 		if hotEntry.Operation != types.OpNone && isHintHotEntry(hotEntry) {
@@ -383,6 +394,7 @@ func (okv *OnvaKV) update() {
 			hotEntry.IsModified = true
 		}
 	}
+	//@ start = gotsc.BenchStart()
 	// update stored data
 	for _, hotEntry := range okv.cachedEntries {
 		if !(hotEntry.IsModified || hotEntry.IsTouchedByNext) {
@@ -395,7 +407,6 @@ func (okv *OnvaKV) update() {
 			okv.idxTree.Delete(ptr.Key)
 			okv.DeactiviateEntry(ptr.SerialNum)
 		} else if hotEntry.Operation != types.OpNone || hotEntry.IsTouchedByNext {
-			//start := gotsc.BenchStart()
 			if ptr.SerialNum >= 0 { // if this entry already exists
 				//fmt.Printf("Now we deactive %d for refresh %#v\n", ptr.SerialNum, ptr)
 				okv.DeactiviateEntry(ptr.SerialNum)
@@ -405,13 +416,13 @@ func (okv *OnvaKV) update() {
 			ptr.SerialNum = okv.meta.GetMaxSerialNum()
 			//fmt.Printf("Now SerialNum = %d for %s(%#v) %#v Entry %#v\n", ptr.SerialNum, string(ptr.Key), ptr.Key, hotEntry, *ptr)
 			okv.meta.IncrMaxSerialNum()
-			//Phase1Time += gotsc.BenchEnd() - start - tscOverhead
-			//start = gotsc.BenchStart()
+			//@ start := gotsc.BenchStart()
 			pos := okv.datTree.AppendEntry(ptr)
-			//Phase2Time += gotsc.BenchEnd() - start - tscOverhead
+			//@ Phase2Time += gotsc.BenchEnd() - start - tscOverhead
 			okv.idxTree.Set(ptr.Key, uint64(pos))
 		}
 	}
+	//@ Phase1n2Time += gotsc.BenchEnd() - start - tscOverhead
 }
 
 func (okv *OnvaKV) DeactiviateEntry(sn int64) {
@@ -445,10 +456,11 @@ func (okv *OnvaKV) ActiveCount() int {
 	return okv.idxTree.ActiveCount()
 }
 
-var Phase1Time, Phase2Time, Phase3Time, tscOverhead uint64
+var Phase1n2Time, Phase1Time, Phase2Time, Phase3Time, Phase4Time, Phase0Time, tscOverhead uint64
 
 func (okv *OnvaKV) EndWrite() {
 	okv.update()
+	//@ start := gotsc.BenchStart()
 	//if okv.meta.GetActiveEntryCount() != int64(okv.idxTree.ActiveCount()) - 2 {
 	//	panic(fmt.Sprintf("Fuck meta.GetActiveEntryCount %d okv.idxTree.ActiveCount %d\n", okv.meta.GetActiveEntryCount(), okv.idxTree.ActiveCount()))
 	//}
@@ -469,10 +481,14 @@ func (okv *OnvaKV) EndWrite() {
 		okv.meta.IncrOldestActiveTwigID()
 	}
 	root := okv.datTree.EndBlock()
+	//@ Phase3Time += gotsc.BenchEnd() - start - tscOverhead
+	//@ start = gotsc.BenchStart()
 	okv.rootHash = root
-	okv.k2heMap = &sync.Map{} // clear content
-	okv.k2nkMap = &sync.Map{} // clear content
-	okv.cachedEntries = okv.cachedEntries[:0] // clear content
+	okv.k2heMap = NewBucketMap() // clear content
+	okv.k2nkMap = NewBucketMap() // clear content
+	for i := range okv.tempEntries64 {
+		okv.tempEntries64[i] = okv.tempEntries64[i][:0] // clear content
+	}
 
 	eS, tS := okv.datTree.GetFileSizes()
 	okv.meta.SetEntryFileSize(eS)
@@ -480,6 +496,7 @@ func (okv *OnvaKV) EndWrite() {
 	okv.meta.Commit()
 	okv.idxTree.EndWrite()
 	okv.rocksdb.CloseOldBatch()
+	//@ Phase4Time += gotsc.BenchEnd() - start - tscOverhead
 }
 
 func (okv *OnvaKV) InitGuards(startKey, endKey []byte) {
@@ -545,6 +562,35 @@ func (okv *OnvaKV) PruneBeforeHeight(height int64) {
 	okv.rocksdb.SetPruneHeight(uint64(height))
 }
 
+type BucketMap struct {
+	maps [64]map[string]*HotEntry
+	mtxs [64]sync.RWMutex
+}
+
+func NewBucketMap() *BucketMap {
+	res := &BucketMap{}
+	for i := range res.maps {
+		res.maps[i] = make(map[string]*HotEntry, 64)
+	}
+	return res
+}
+
+func (bm *BucketMap) Load(key string) (value *HotEntry, ok bool) {
+	idx := int(key[0] >> 2) // most significant 6 bits as index
+	bm.mtxs[idx].RLock()
+	defer bm.mtxs[idx].RUnlock()
+	value, ok = bm.maps[idx][key]
+	return
+}
+
+func (bm *BucketMap) Store(key string, value *HotEntry) {
+	idx := int(key[0] >> 2) // most significant 6 bits as index
+	bm.mtxs[idx].Lock()
+	defer bm.mtxs[idx].Unlock()
+	bm.maps[idx][key] = value
+}
+
+
 type OnvaIterator struct {
 	okv  *OnvaKV
 	iter types.Iterator
@@ -583,3 +629,4 @@ func (okv *OnvaKV) Iterator(start, end []byte) dbm.Iterator {
 func (okv *OnvaKV) ReverseIterator(start, end []byte) dbm.Iterator {
 	return &OnvaIterator{okv: okv, iter: okv.idxTree.ReverseIterator(start, end)}
 }
+

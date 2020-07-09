@@ -6,13 +6,15 @@ import (
 	"fmt"
 	"encoding/binary"
 	"os"
-	"sync"
+	"runtime"
+	"sync/atomic"
 	"time"
 
 	sha256 "github.com/minio/sha256-simd"
 	"github.com/coinexchain/randsrc"
 
 	"github.com/coinexchain/onvakv"
+	"github.com/coinexchain/onvakv/datatree"
 	"github.com/coinexchain/onvakv/store"
 	"github.com/coinexchain/onvakv/store/types"
 	"github.com/coinexchain/onvakv/store/rabbit"
@@ -24,22 +26,19 @@ const (
 
 func CheckAccountsInBlock(snList []uint32, root *store.RootStore) {
 	trunk := root.GetTrunkStore().(*store.TrunkStore)
-	var wg sync.WaitGroup
-	wg.Add(NumWorkersInBlock)
-	for i := 0; i < NumWorkersInBlock; i++ {
-		go func(i int) {
+	sharedIdx := int64(-1)
+	datatree.ParrallelRun(NumWorkersInBlock, func(workerID int) {
+		rbt := rabbit.NewRabbitStore(trunk)
+		for {
+			myIdx := atomic.AddInt64(&sharedIdx, 1)
+			if myIdx >= int64(len(snList)) {break}
 			if WithRabbit {
-				rbt := rabbit.NewRabbitStore(trunk)
-				CheckAccountsWithRabbit(snList[i*NumNewAccountsPerWorker:(i+1)*NumNewAccountsPerWorker], rbt)
-				rbt.Close(false)
+				CheckAccountWithRabbit(snList[myIdx], rbt)
 			} else {
-				CheckAccountsWithRoot(snList[i*NumNewAccountsPerWorker:(i+1)*NumNewAccountsPerWorker], root)
+				CheckAccountWithRoot(snList[myIdx], root)
 			}
-			wg.Done()
-		}(i)
-	}
-	wg.Wait()
-	trunk.Close(false)
+		}
+	})
 }
 
 func CompareAccounts(acc, accRD *Account) {
@@ -64,39 +63,35 @@ func CompareAccounts(acc, accRD *Account) {
 	}
 }
 
-func CheckAccountsWithRoot(snList []uint32, root *store.RootStore) {
-	for _, sn := range snList {
-		addr := SNToAddr(int64(sn))
-		hash := sha256.Sum256(addr[:])
-		var sk [rabbit.KeySize]byte
-		copy(sk[:], hash[:])
-		sk[0] |= 0x1
-		bz := root.Get(sk[:])
-		cachedValue := rabbit.BytesToCachedValue(bz)
-		if cachedValue.IsEmpty() {
-			panic("Read Empty Entry")
-		}
-		bz = cachedValue.GetValue()
-		var accRD Account
-		accRD.FromBytes(bz)
-
-		acc := GenerateZeroCoinAccount(int64(sn))
-		CompareAccounts(&acc, &accRD)
+func CheckAccountWithRoot(sn uint32, root *store.RootStore) {
+	addr := SNToAddr(int64(sn))
+	hash := sha256.Sum256(addr[:])
+	var sk [rabbit.KeySize]byte
+	copy(sk[:], hash[:])
+	sk[0] |= 0x1
+	bz := root.Get(sk[:])
+	cachedValue := rabbit.BytesToCachedValue(bz)
+	if cachedValue.IsEmpty() {
+		panic("Read Empty Entry")
 	}
+	bz = cachedValue.GetValue()
+	var accRD Account
+	accRD.FromBytes(bz)
+
+	acc := GenerateZeroCoinAccount(int64(sn))
+	CompareAccounts(&acc, &accRD)
 }
 
-func CheckAccountsWithRabbit(snList []uint32, rbt rabbit.RabbitStore) {
-	for _, sn := range snList {
-		acc := GenerateZeroCoinAccount(int64(sn))
-		var accRD Account
-		var accptr types.Serializable
-		accptr = &accRD
-		rbt.GetObj(acc.Address(), &accptr)
-		if accptr == nil {
-			panic("Cannot find account")
-		}
-		CompareAccounts(&acc, &accRD)
+func CheckAccountWithRabbit(sn uint32, rbt rabbit.RabbitStore) {
+	acc := GenerateZeroCoinAccount(int64(sn))
+	var accRD Account
+	var accptr types.Serializable
+	accptr = &accRD
+	rbt.GetObj(acc.Address(), &accptr)
+	if accptr == nil {
+		panic("Cannot find account")
 	}
+	CompareAccounts(&acc, &accRD)
 }
 
 func ShuffleSNList(snList []uint32, rs randsrc.RandSrc) {
@@ -148,11 +143,6 @@ func ReadOneBlockOfAccounts(f *os.File, n int) (res [NumNewAccountsInBlock]uint3
 func RunCheckAccounts(numAccounts int, randFilename string) {
 	fmt.Printf("Start %f\n", float64(time.Now().UnixNano())/1000000000.0)
 	rs := randsrc.NewRandSrcFromFile(randFilename)
-	okv, err := onvakv.NewOnvaKV("./onvakv4test", false, [][]byte{GuardStart, GuardEnd})
-	if err != nil {
-		panic(err)
-	}
-	root := store.NewRootStore(okv, nil, nil)
 
 	DumpRandomSNList(GenerateRandomSNList(numAccounts, rs))
 	f, err := os.Open("randomlist.dat")
@@ -160,6 +150,13 @@ func RunCheckAccounts(numAccounts int, randFilename string) {
 		panic(err)
 	}
 	defer f.Close()
+	runtime.GC()
+
+	okv, err := onvakv.NewOnvaKV("./onvakv4test", false, [][]byte{GuardStart, GuardEnd})
+	if err != nil {
+		panic(err)
+	}
+	root := store.NewRootStore(okv, nil, nil)
 
 	fmt.Printf("After Load %f\n", float64(time.Now().UnixNano())/1000000000.0)
 	if numAccounts % NumNewAccountsInBlock != 0 {

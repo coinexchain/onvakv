@@ -8,12 +8,14 @@ import (
 	"math/big"
 	"os"
 	"sort"
-	"sync"
+	"sync/atomic"
 
 	sha256 "github.com/minio/sha256-simd"
 	"github.com/coinexchain/randsrc"
+	"github.com/dterei/gotsc"
 
 	"github.com/coinexchain/onvakv"
+	"github.com/coinexchain/onvakv/datatree"
 	"github.com/coinexchain/onvakv/store"
 	"github.com/coinexchain/onvakv/store/types"
 	"github.com/coinexchain/onvakv/store/rabbit"
@@ -38,9 +40,11 @@ const (
 	ERC20TokenOffset = NativeTokenAmountOffset + AmountLen
 
 	NumNewAccountsInBlock = 20000
-	NumNewAccountsPerWorker = 400
-	NumWorkersInBlock = NumNewAccountsInBlock/NumNewAccountsPerWorker
+	NumWorkersInBlock = 64
+	NumNewAccountsPerWorker = NumNewAccountsInBlock/NumWorkersInBlock
 )
+
+var Phase1Time, Phase2Time, Phase3Time, tscOverhead uint64
 
 // convert coin type as an integer to coin id as a hash
 func CoinTypeToCoinID(i int) (res [ShortIDLen]byte) {
@@ -243,14 +247,17 @@ func RunGenerateAccounts(numAccounts int, randFilename string, jsonFile string) 
 		panic("numAccounts % NumNewAccountsInBlock != 0")
 	}
 	numBlocks := numAccounts / NumNewAccountsInBlock
+	start := gotsc.BenchStart()
 	for i := 0; i < numBlocks; i++ {
 		root.SetHeight(int64(i))
 		if i % 10 == 0 {
 			fmt.Printf("Now %d of %d, %d\n", i, numBlocks, root.ActiveCount())
 		}
 		trunk := root.GetTrunkStore().(*store.TrunkStore)
-		GenerateAccountsInBlock(i*NumNewAccountsInBlock, trunk, rs, addr2num)
+		GenerateAccountsInBlock(int64(i*NumNewAccountsInBlock), trunk, rs, addr2num)
+		start := gotsc.BenchStart()
 		trunk.Close(true)
+		Phase3Time += gotsc.BenchEnd() - start - tscOverhead
 	}
 
 	b, err := json.Marshal(addr2num)
@@ -262,31 +269,49 @@ func RunGenerateAccounts(numAccounts int, randFilename string, jsonFile string) 
 	out.Write(b)
 	out.Close()
 
+	fmt.Printf("total tsc time %d\n", gotsc.BenchEnd() - start)
+	fmt.Printf("phase1 time %d\n", Phase1Time)
+	fmt.Printf("phase2 time %d\n", Phase2Time)
+	fmt.Printf("phase3 time %d\n", Phase3Time)
+	fmt.Printf("phaseTrunk time %d\n", store.PhaseTrunkTime)
+	fmt.Printf("phaseEndW time %d\n", store.PhaseEndWriteTime)
+	fmt.Printf("onvakv.phase0 time %d\n", onvakv.Phase0Time)
+	fmt.Printf("onvakv.pha1n2 time %d\n", onvakv.Phase1n2Time)
+	fmt.Printf("onvakv.phase1 time %d\n", onvakv.Phase1Time)
+	fmt.Printf("onvakv.phase2 time %d\n", onvakv.Phase2Time)
+	fmt.Printf("onvakv.phase3 time %d\n", onvakv.Phase3Time)
+	fmt.Printf("onvakv.phase4 time %d\n", onvakv.Phase4Time)
+	fmt.Printf("dat.ph1 time %d\n", datatree.Phase1Time)
+	fmt.Printf("dat.ph2 time %d\n", datatree.Phase2Time)
+	fmt.Printf("dat.ph3 time %d\n", datatree.Phase3Time)
+	fmt.Printf("write time %d\n", datatree.TotalWriteTime)
+	fmt.Printf("read time %d\n", datatree.TotalReadTime)
+	fmt.Printf("sync time %d\n", datatree.TotalSyncTime)
 	root.Close()
 }
 
-func GenerateAccountsInBlock(startIdx int, trunk *store.TrunkStore, rs randsrc.RandSrc, addr2num map[[AddrLen]byte]uint64) {
-	var accounts [NumWorkersInBlock][NumNewAccountsPerWorker]Account
-	accSN := int64(startIdx)
-	for i := 0; i < NumWorkersInBlock; i++ {
-		for j := 0; j < NumNewAccountsPerWorker; j++ {
-			accounts[i][j] = GenerateAccount(accSN, rs)
-			accSN++
-		}
+func GenerateAccountsInBlock(startSN int64, trunk *store.TrunkStore, rs randsrc.RandSrc, addr2num map[[AddrLen]byte]uint64) {
+	start := gotsc.BenchStart()
+
+	var accounts [NumNewAccountsInBlock]Account
+	for i := 0; i < NumNewAccountsInBlock; i++ {
+		accounts[i] = GenerateAccount(startSN+int64(i), rs)
 	}
+	////////
+	sharedIdx := int64(-1)
 	var rbtList [NumWorkersInBlock]rabbit.RabbitStore
 	// Parrallel execution
-	var wg sync.WaitGroup
-	wg.Add(len(rbtList))
-	for i := 0; i < NumWorkersInBlock; i++ {
-		go func(i int) {
-			rbt := rabbit.NewRabbitStore(trunk)
-			rbtList[i] = rbt
-			WriteAccounts(accounts, i, rbt, addr2num)
-			wg.Done()
-		}(i)
-	}
-	wg.Wait()
+	datatree.ParrallelRun(NumWorkersInBlock, func(workerID int) {
+		rbt := rabbit.NewRabbitStore(trunk)
+		rbtList[workerID] = rbt
+		for {
+			myIdx := atomic.AddInt64(&sharedIdx, 1)
+			if myIdx >= int64(len(accounts)) {break}
+			WriteAccount(accounts[myIdx], rbt, addr2num)
+		}
+	})
+	Phase1Time += gotsc.BenchEnd() - start - tscOverhead
+	start = gotsc.BenchStart()
 	// Serial collection
 	touchedShortKey := make(map[[rabbit.KeySize]byte]struct{}, NumNewAccountsInBlock)
 	for i, rbt := range rbtList {
@@ -299,10 +324,7 @@ func GenerateAccountsInBlock(startIdx int, trunk *store.TrunkStore, rs randsrc.R
 			return false
 		})
 		if hasConflict { // re-execute it serially
-			fmt.Printf("hasConflict %d\n", i)
-			rbt.Close(false)
-			rbt = rabbit.NewRabbitStore(trunk)
-			WriteAccounts(accounts, i, rbt, addr2num)
+			panic(fmt.Sprintf("hasConflict %d\n", i))
 		}
 		rbt.ScanAllShortKeys(func(key [rabbit.KeySize]byte) (stop bool) {
 			touchedShortKey[key] = struct{}{}
@@ -310,20 +332,20 @@ func GenerateAccountsInBlock(startIdx int, trunk *store.TrunkStore, rs randsrc.R
 		})
 		rbt.Close(true)
 	}
+	Phase2Time += gotsc.BenchEnd() - start - tscOverhead
 }
 
-func WriteAccounts(accounts [NumWorkersInBlock][NumNewAccountsPerWorker]Account, i int, rbt rabbit.RabbitStore, addr2num map[[AddrLen]byte]uint64) {
-	for _, acc := range accounts[i] {
-		rbt.Set(acc.Address(), acc.ToBytes())
-		path, ok := rbt.GetShortKeyPath(acc.Address())
-		if !ok {
-			panic("Cannot get the object which was just set")
-		}
-		if len(path) > 1 { // special cases: more than one hop
-			var addr [AddrLen]byte
-			copy(addr[:], acc.Address())
-			n := binary.LittleEndian.Uint64(path[len(path)-1][:])
-			addr2num[addr] = n
-		}
+func WriteAccount(acc Account, rbt rabbit.RabbitStore, addr2num map[[AddrLen]byte]uint64) {
+	rbt.Set(acc.Address(), acc.ToBytes())
+	path, ok := rbt.GetShortKeyPath(acc.Address())
+	if !ok {
+		panic("Cannot get the object which was just set")
+	}
+	if len(path) > 1 { // special cases: more than one hop
+		var addr [AddrLen]byte
+		copy(addr[:], acc.Address())
+		n := binary.LittleEndian.Uint64(path[len(path)-1][:])
+		addr2num[addr] = n
 	}
 }
+

@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// go test -c -coverpkg github.com/coinexchain/onvakv/store .
+// go test -tags cppbtree -c -coverpkg github.com/coinexchain/onvakv/store .
 
 // RANDFILE=~/Downloads/goland-2019.1.3.dmg RANDCOUNT=1000 ./fuzz.test 
 

@@ -6,10 +6,17 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	//"sync/atomic"
+
+	//"github.com/dterei/gotsc"
 )
 
+var TotalWriteTime, TotalReadTime, TotalSyncTime uint64
+
 const (
-	BufferSize = 1024*1024 // 1MB
+	//BufferSize = 32*1024*1024
+	BufferSize = 32*1024 //For UnitTest
 )
 
 // Head prune-able file
@@ -21,6 +28,8 @@ type HPFile struct {
 	latestFileSize int64
 	bufferSize     int
 	buffer         []byte
+	mtx            sync.RWMutex
+
 }
 
 func NewHPFile(bufferSize, blockSize int, dirName string) (HPFile, error) {
@@ -119,15 +128,25 @@ func (hpf *HPFile) Truncate(size int64) error {
 	return hpf.fileMap[hpf.largestID].Truncate(size)
 }
 
-func (hpf *HPFile) Sync() error {
+func (hpf *HPFile) Flush() {
+	//start := gotsc.BenchStart()
 	if len(hpf.buffer) != 0 {
 		_, err := hpf.fileMap[hpf.largestID].Write(hpf.buffer)
 		if err != nil {
-			return err
+			panic(err)
 		}
 		hpf.buffer = hpf.buffer[:0]
 	}
-	return hpf.fileMap[hpf.largestID].Sync()
+	hpf.fileMap[hpf.largestID].Sync()
+	//atomic.AddUint64(&TotalSyncTime, gotsc.BenchEnd() - start - tscOverhead)
+}
+
+func (hpf *HPFile) FlushAsync() {
+	hpf.mtx.Lock()
+	go func() {
+		defer hpf.mtx.Unlock()
+		hpf.Flush()
+	}()
 }
 
 func (hpf *HPFile) Close() error {
@@ -141,6 +160,9 @@ func (hpf *HPFile) Close() error {
 }
 
 func (hpf *HPFile) ReadAt(buf []byte, off int64) error {
+	hpf.mtx.RLock()
+	defer hpf.mtx.RUnlock()
+	//start := gotsc.BenchStart()
 	fileID := off / int64(hpf.blockSize)
 	pos := off % int64(hpf.blockSize)
 	f, ok := hpf.fileMap[int(fileID)]
@@ -148,10 +170,14 @@ func (hpf *HPFile) ReadAt(buf []byte, off int64) error {
 		return fmt.Errorf("Can not find the file with id=%d (%d/%d)", fileID, off, hpf.blockSize)
 	}
 	_, err := f.ReadAt(buf, pos)
+	//atomic.AddUint64(&TotalReadTime, gotsc.BenchEnd() - start - tscOverhead)
 	return err
 }
 
 func (hpf *HPFile) Append(bufList [][]byte) (int64, error) {
+	//start := gotsc.BenchStart()
+	hpf.mtx.Lock()
+	defer hpf.mtx.Unlock()
 	f := hpf.fileMap[hpf.largestID]
 	startPos := int64(hpf.largestID*hpf.blockSize) + hpf.latestFileSize
 	for _, buf := range bufList {
@@ -175,13 +201,10 @@ func (hpf *HPFile) Append(bufList [][]byte) (int64, error) {
 	}
 	overflowByteCount := hpf.latestFileSize - int64(hpf.blockSize)
 	if overflowByteCount >= 0 {
-		err := hpf.Sync()
-		if err != nil {
-			return 0, err
-		}
+		hpf.Flush()
 		hpf.largestID++
 		fname := fmt.Sprintf("%s/%d-%d", hpf.dirName, hpf.largestID, hpf.blockSize)
-		f, err = os.OpenFile(fname, os.O_RDWR|os.O_CREATE, 0700)
+		f, err := os.OpenFile(fname, os.O_RDWR|os.O_CREATE, 0700)
 		if err != nil {
 			return 0, err
 		}
@@ -194,6 +217,7 @@ func (hpf *HPFile) Append(bufList [][]byte) (int64, error) {
 		hpf.fileMap[hpf.largestID] = f
 		hpf.latestFileSize = overflowByteCount
 	}
+	//atomic.AddUint64(&TotalWriteTime, gotsc.BenchEnd() - start - tscOverhead)
 	return startPos, nil
 }
 

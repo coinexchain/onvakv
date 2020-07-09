@@ -34,7 +34,7 @@ func TestTwimMtFile(t *testing.T) {
 	tf.AppendTwig(twig1, 1000789)
 	tf.AppendTwig(twig2, 2000789)
 
-	tf.Sync()
+	tf.Flush()
 	tf.Close()
 
 	tf, err = NewTwigMtFile(64*1024, 1*1024*1024/*1MB*/, "./twig")

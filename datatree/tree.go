@@ -5,6 +5,8 @@ import (
 	"math/bits"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync/atomic"
 	"sort"
 
 	"github.com/dterei/gotsc"
@@ -196,6 +198,7 @@ type Tree struct {
 	youngestTwigID     int64
 	activeTwigs        map[int64]*Twig
 	mtree4YoungestTwig [4096][32]byte
+	leave4YoungestTwig [2048][]byte
 
 	// The following variables are only used during the execution of one block
 	mtree4YTChangeStart int
@@ -316,13 +319,13 @@ func (tree *Tree) AppendEntry(entry *Entry) int64 {
 	tree.deactivedSNList = tree.deactivedSNList[:0] // clear its content
 	pos := tree.entryFile.Append(bz)
 	// update the corresponding leaf of merkle tree
-	idx := entry.SerialNum & TwigMask
-	copy(tree.mtree4YoungestTwig[LeafCountInTwig+idx][:], hash(bz))
+	//copy(tree.mtree4YoungestTwig[LeafCountInTwig+position][:], hash(bz))
+	tree.leave4YoungestTwig[position] = bz
 
-	if idx == 0 { // when this is the first entry of current twig
+	if position == 0 { // when this is the first entry of current twig
 		//fmt.Printf("Here FirstEntryPos of %d : %d\n", twigID, pos)
 		tree.activeTwigs[twigID].FirstEntryPos = pos
-	} else if idx == TwigMask { // when this is the last entry of current twig
+	} else if position == TwigMask { // when this is the last entry of current twig
 		// write the merkle tree of youngest twig to twigMtFile
 		tree.syncMT4YoungestTwig()
 		twig := tree.activeTwigs[twigID]
@@ -422,8 +425,8 @@ func (tree *Tree) EndBlock() (rootHash []byte) {
 	tree.twigsToBeDeleted = tree.twigsToBeDeleted[:0] // clear its content
 	//Phase1Time += gotsc.BenchEnd() - start - tscOverhead
 	//start = gotsc.BenchStart()
-	tree.entryFile.Sync()
-	tree.twigMtFile.Sync()
+	tree.entryFile.FlushAsync()
+	tree.twigMtFile.FlushAsync()
 	//Phase2Time += gotsc.BenchEnd() - start - tscOverhead
 	return
 }
@@ -596,6 +599,26 @@ func (tree *Tree) syncMT4YoungestTwig() {
 	if tree.mtree4YTChangeStart == -1 {// nothing changed
 		return
 	}
+	//for i := 0; i < LeafCountInTwig; i++ {
+	//	if tree.leave4YoungestTwig[i] != nil {
+	//		copy(tree.mtree4YoungestTwig[LeafCountInTwig+i][:], hash(tree.leave4YoungestTwig[i]))
+	//		tree.leave4YoungestTwig[i] = nil
+	//	}
+	//}
+	//for myIdx := tree.mtree4YTChangeStart; myIdx <= tree.mtree4YTChangeEnd; myIdx++ {
+	//	copy(tree.mtree4YoungestTwig[myIdx][:], hash(tree.leave4YoungestTwig[myIdx]))
+	//	tree.leave4YoungestTwig[myIdx] = nil
+	//}
+	sharedIdx := int64(-1)
+	ParrallelRun(runtime.NumCPU(), func(workerID int) {
+		for {
+			myIdx := atomic.AddInt64(&sharedIdx, 1)
+			if myIdx >= int64(len(tree.leave4YoungestTwig)) {break}
+			if tree.leave4YoungestTwig[myIdx] == nil {continue}
+			copy(tree.mtree4YoungestTwig[LeafCountInTwig+myIdx][:], hash(tree.leave4YoungestTwig[myIdx]))
+			tree.leave4YoungestTwig[myIdx] = nil
+		}
+	})
 	var h Hasher
 	level := byte(0)
 	start, end := tree.mtree4YTChangeStart, tree.mtree4YTChangeEnd
