@@ -23,6 +23,9 @@ const (
 	defaultFileSize = 1024*1024*1024
 	StartReapThres int64 = 10000 // 1000 * 1000
 	KeptEntriesToActiveEntriesRatio = 2
+
+	heMapSize = 128
+	nkMapSize = 64
 )
 
 type OnvaKV struct {
@@ -40,7 +43,7 @@ type OnvaKV struct {
 }
 
 func NewOnvaKV4Mock(startEndKeys [][]byte) *OnvaKV {
-	okv := &OnvaKV{k2heMap: NewBucketMap(), k2nkMap: NewBucketMap()}
+	okv := &OnvaKV{k2heMap: NewBucketMap(heMapSize), k2nkMap: NewBucketMap(nkMapSize)}
 
 	okv.datTree = datatree.NewMockDataTree()
 	okv.idxTree = indextree.NewMockIndexTree()
@@ -62,8 +65,8 @@ func NewOnvaKV(dirName string, queryHistory bool, startEndKeys [][]byte) (*OnvaK
 	_, err := os.Stat(dirName)
 	dirNotExists := os.IsNotExist(err)
 	okv := &OnvaKV{
-		k2heMap:      NewBucketMap(),
-		k2nkMap:      NewBucketMap(),
+		k2heMap:      NewBucketMap(heMapSize),
+		k2nkMap:      NewBucketMap(nkMapSize),
 		cachedEntries: make([]*HotEntry, 0, 2000),
 	}
 	for i := range okv.tempEntries64 {
@@ -471,7 +474,7 @@ func (okv *OnvaKV) EndWrite() {
 		int64(okv.idxTree.ActiveCount()) > StartReapThres {
 		twigID := okv.meta.GetOldestActiveTwigID()
 		entries := okv.datTree.GetActiveEntriesInTwig(twigID)
-		for _, e := range entries {
+		for e := range entries {
 			if string(e.Key) == "dummy" {panic(fmt.Sprintf("an active entry is dummy %#v", e))}
 			okv.DeactiviateEntry(e.SerialNum)
 			e.SerialNum = okv.meta.GetMaxSerialNum()
@@ -486,8 +489,8 @@ func (okv *OnvaKV) EndWrite() {
 	//@ Phase3Time += gotsc.BenchEnd() - start - tscOverhead
 	//@ start = gotsc.BenchStart()
 	okv.rootHash = root
-	okv.k2heMap = NewBucketMap() // clear content
-	okv.k2nkMap = NewBucketMap() // clear content
+	okv.k2heMap = NewBucketMap(heMapSize) // clear content
+	okv.k2nkMap = NewBucketMap(nkMapSize) // clear content
 	for i := range okv.tempEntries64 {
 		okv.tempEntries64[i] = okv.tempEntries64[i][:0] // clear content
 	}
@@ -569,10 +572,10 @@ type BucketMap struct {
 	mtxs [64]sync.RWMutex
 }
 
-func NewBucketMap() *BucketMap {
+func NewBucketMap(size int) *BucketMap {
 	res := &BucketMap{}
 	for i := range res.maps {
-		res.maps[i] = make(map[string]*HotEntry, 64)
+		res.maps[i] = make(map[string]*HotEntry, size)
 	}
 	return res
 }

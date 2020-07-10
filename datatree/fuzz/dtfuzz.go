@@ -257,7 +257,7 @@ func (ctx *Context) pruneTree() {
 	fmt.Printf("Try pruneTree %f %d %d\n", ctx.getRatio(), ctx.activeCount, ctx.serialNum - ctx.oldestActiveSN())
 	for ctx.getRatio() < PruneRatio {
 		entries := ctx.tree.GetActiveEntriesInTwig(ctx.oldestActiveTwigID)
-		for _, entry := range entries {
+		for entry := range entries {
 			sn := entry.SerialNum
 			if sn < 0 || sn > (1<<31) {
 				fmt.Printf("Why? sn=%d\n", sn)

@@ -514,8 +514,10 @@ func TestTreeAppendEntry(t *testing.T) {
 	assert.Equal(t, false, tree.TwigCanBePruned(1))
 
 	entryList := tree.GetActiveEntriesInTwig(0)
-	for i, entry := range entryList {
+	i := 0
+	for entry := range entryList {
 		assert.Equal(t, activeList[i], entry.SerialNum)
+		i++
 	}
 
 	tree.Flush()

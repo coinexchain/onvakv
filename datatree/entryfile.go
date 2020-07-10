@@ -280,18 +280,22 @@ func (ef *EntryFile) Append(b []byte) (pos int64) {
 	return
 }
 
-func (ef *EntryFile) GetActiveEntriesInTwig(twig *Twig) (res []*Entry) {
-	start := twig.FirstEntryPos
-	for i := 0; i < LeafCountInTwig; i++ {
-		if twig.getBit(i) {
-			entry, _, next := ef.ReadEntry(start)
-			start = next
-			res = append(res, entry)
-		} else { // skip an inactive entry
-			var length int64
-			length, _ = ef.readMagicBytesAndLength(start)
-			start = getNextPos(start, length)
+func (ef *EntryFile) GetActiveEntriesInTwig(twig *Twig) chan *Entry {
+	res := make(chan *Entry, 100)
+	go func() {
+		start := twig.FirstEntryPos
+		for i := 0; i < LeafCountInTwig; i++ {
+			if twig.getBit(i) {
+				entry, _, next := ef.ReadEntry(start)
+				start = next
+				res <- entry
+			} else { // skip an inactive entry
+				var length int64
+				length, _ = ef.readMagicBytesAndLength(start)
+				start = getNextPos(start, length)
+			}
 		}
-	}
-	return
+		close(res)
+	}()
+	return res
 }

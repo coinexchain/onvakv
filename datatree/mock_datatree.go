@@ -60,15 +60,17 @@ func (dt *MockDataTree) EvictTwig(twigID int64) {
 	delete(dt.twigs, twigID)
 }
 
-func (dt *MockDataTree) GetActiveEntriesInTwig(twigID int64) []*Entry {
-	twig := dt.twigs[twigID]
-	res := make([]*Entry, 0, LeafCountInTwig)
-	for i, active := range twig.activeBits {
-		if active {
-			entry := twig.entries[i]
-			res = append(res, &entry)
+func (dt *MockDataTree) GetActiveEntriesInTwig(twigID int64) chan *Entry {
+	res := make(chan *Entry, 100)
+	go func() {
+		twig := dt.twigs[twigID]
+		for i, active := range twig.activeBits {
+			if active {
+				entry := twig.entries[i]
+				res <- &entry
+			}
 		}
-	}
+	}()
 	return res
 }
 

@@ -339,7 +339,7 @@ func (tree *Tree) AppendEntry(entry *Entry) int64 {
 	return pos
 }
 
-func (tree *Tree) GetActiveEntriesInTwig(twigID int64) []*Entry {
+func (tree *Tree) GetActiveEntriesInTwig(twigID int64) chan *Entry {
 	twig := tree.activeTwigs[twigID]
 	return tree.entryFile.GetActiveEntriesInTwig(twig)
 }

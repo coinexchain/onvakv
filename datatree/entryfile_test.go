@@ -101,7 +101,11 @@ func TestEntryFile(t *testing.T) {
 	twig.activeBits[0] = 3 // 3 and 0
 	twig.activeBits[255] = 128 // 2
 
-	activeEntries := ef.GetActiveEntriesInTwig(twig)
+	chanEntries := ef.GetActiveEntriesInTwig(twig)
+	activeEntries := make([]*Entry, 0, 3)
+	for e := range chanEntries {
+		activeEntries = append(activeEntries, e)
+	}
 	assert.Equal(t, 3, len(activeEntries))
 	assert.Equal(t, entries[3], *activeEntries[0])
 	assert.Equal(t, entries[0], *activeEntries[1])

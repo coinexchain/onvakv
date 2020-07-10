@@ -61,7 +61,7 @@ type DataTree interface {
 	ReadEntry(pos int64) *Entry
 	GetActiveBit(sn int64) bool
 	EvictTwig(twigID int64)
-	GetActiveEntriesInTwig(twigID int64) []*Entry
+	GetActiveEntriesInTwig(twigID int64) chan *Entry
 	ScanEntries(oldestActiveTwigID int64, outChan chan EntryX)
 	TwigCanBePruned(twigID int64) bool
 	PruneTwigs(startID, endID int64) []byte
