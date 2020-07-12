@@ -339,7 +339,11 @@ func (tree *Tree) ScanEntries(oldestActiveTwigID int64, outChan chan types.Entry
 	size := tree.entryFile.Size()
 	//fmt.Printf("entryFile.Size() %d\n", size)
 	for pos < size {
-		entry, deactivedSNList, nextPos := tree.entryFile.ReadEntry(pos)
+		//!! if pos > 108995312 {
+		//!! 	entryBz, nxt := tree.entryFile.ReadEntryRawBytes(pos)
+		//!! 	fmt.Printf("Fuck now pos %d %#v len=%d nxt=%d\n", pos, entryBz, len(entryBz), nxt)
+		//!! }
+		entry, deactivedSNList, nextPos := tree.entryFile.ReadEntryAndSNList(pos)
 		//if Debug {
 		//	if pos == 106245928 {
 		//		fmt.Printf("Now handle %d pos %d nextPos %d\n", entry.SerialNum, pos, nextPos)
@@ -447,6 +451,7 @@ func RecoverTree(blockSize int, dirName string, edgeNodes []*EdgeNode, lastPrune
 func CompareTreeTwigs(treeA, treeB *Tree) {
 	for twigID, a := range treeA.activeTwigs {
 		b := treeB.activeTwigs[twigID]
+		//!! fmt.Printf("twigID %d of %d\n", twigID, len(treeA.activeTwigs))
 		CompareTwig(twigID, a, b)
 	}
 }

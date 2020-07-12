@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mmcloughlin/meow"
+	"github.com/dterei/gotsc"
 
 	"github.com/coinexchain/onvakv"
 	"github.com/coinexchain/onvakv/datatree"
@@ -185,6 +186,8 @@ func (job *Job) executeTx(root *store.RootStore, tx Tx) {
 }
 
 func RunTx(numBlock int, txFile string) {
+	tscOverhead = gotsc.TSCOverhead()
+
 	fin, err := os.Open(txFile)
 	if err != nil {
 		panic(err)
@@ -207,14 +210,19 @@ func RunTx(numBlock int, txFile string) {
 		panic(err)
 	}
 	fmt.Printf("Loaded %f\n", float64(time.Now().UnixNano())/1e9)
+	startHeight := okv.GetCurrHeight() + 1
 	root := store.NewRootStore(okv, nil, nil)
 	for i := 0; i < numBlock; i++ {
-		fmt.Printf("block %d\n", i)
-		root.SetHeight(int64(i))
+		start := gotsc.BenchStart()
+		height := startHeight+int64(i)
+		fmt.Printf("block %d (%d)\n", i, height)
+		root.SetHeight(height)
 		block := <-ch
 		for j := 0; j < NumEpochInBlock; j++ {
 			block.epochList[j].Run(root)
 		}
+		Phase1Time += gotsc.BenchEnd() - start - tscOverhead
+		start = gotsc.BenchStart()
 		root.BeginWrite()
 		for j := 0; j < NumEpochInBlock; j++ {
 			for k := 0; k < NumWorkers; k++ {
@@ -224,8 +232,18 @@ func RunTx(numBlock int, txFile string) {
 			}
 		}
 		root.EndWrite()
+		Phase2Time += gotsc.BenchEnd() - start - tscOverhead
 	}
-	root.Close()
 	fmt.Printf("Finished %f\n", float64(time.Now().UnixNano())/1e9)
+	fmt.Printf("phase1 time %d\n", Phase1Time)
+	fmt.Printf("phase2 time %d\n", Phase2Time)
+	fmt.Printf("onvakv.phase0 time %d\n", onvakv.Phase0Time)
+	fmt.Printf("onvakv.pha1n2 time %d\n", onvakv.Phase1n2Time)
+	fmt.Printf("onvakv.phase1 time %d\n", onvakv.Phase1Time)
+	fmt.Printf("onvakv.phase2 time %d\n", onvakv.Phase2Time)
+	fmt.Printf("onvakv.phase3 time %d\n", onvakv.Phase3Time)
+	fmt.Printf("onvakv.phase4 time %d\n", onvakv.Phase4Time)
+	okv.PrintMetaInfo()
+	root.Close()
 }
 

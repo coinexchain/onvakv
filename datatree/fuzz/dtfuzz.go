@@ -253,20 +253,81 @@ func (ctx *Context) getRatio() float64 {
 	return float64(ctx.activeCount) / float64(ctx.serialNum - ctx.oldestActiveSN())
 }
 
+//!! func (ctx *Context) pruneTree() {
+//!! 	fmt.Printf("Try pruneTree %f %d %d\n", ctx.getRatio(), ctx.activeCount, ctx.serialNum - ctx.oldestActiveSN())
+//!! 	for ctx.getRatio() < PruneRatio {
+//!! 		entryChan := ctx.tree.GetActiveEntriesInTwigOld(ctx.oldestActiveTwigID)
+//!! 		var aList, bList [][]byte
+//!! 		serialNum2 := ctx.serialNum
+//!! 
+//!! 		entryBzChan := ctx.tree.GetActiveEntriesInTwig(ctx.oldestActiveTwigID)
+//!! 		for entryBz := range entryBzChan {
+//!! 			datatree.UpdateSerialNum(entryBz, serialNum2)
+//!! 			bList = append(bList, datatree.ExtractKeyFromRawBytes(entryBz))
+//!! 			serialNum2++
+//!! 		}
+//!! 
+//!! 		for entry := range entryChan {
+//!! 			sn := entry.SerialNum
+//!! 			if sn < 0 || sn > (1<<31) {
+//!! 				fmt.Printf("Why? sn=%d\n", sn)
+//!! 			}
+//!! 			if ctx.tree.GetActiveBit(sn) {
+//!! 				ctx.tree.DeactiviateEntry(sn)
+//!! 				//entry.SerialNum = ctx.serialNum
+//!! 				//ctx.tree.AppendEntry(entry)
+//!! 				bz := datatree.EntryToBytes(*entry, nil)
+//!! 				aList = append(aList, entry.Key)
+//!! 				datatree.UpdateSerialNum(bz, ctx.serialNum)
+//!! 				ctx.tree.AppendEntryRawBytes(bz, ctx.serialNum)
+//!! 				ctx.serialNum++
+//!! 			}
+//!! 		}
+//!! 
+//!! 		if len(aList) != len(bList) {
+//!! 			fmt.Printf("%d vs %d\n", len(aList), len(bList))
+//!! 			panic("different length")
+//!! 		}
+//!! 		for i := range aList {
+//!! 			if !bytes.Equal(aList[i][:], bList[i][:]) {
+//!! 				fmt.Printf("a %#v\n", aList[i])
+//!! 				fmt.Printf("b %#v\n", bList[i])
+//!! 				panic("different content")
+//!! 			}
+//!! 		}
+//!! 
+//!! 		ctx.tree.EvictTwig(ctx.oldestActiveTwigID)
+//!! 		ctx.oldestActiveTwigID++
+//!! 	}
+//!! 	ctx.tree.EndBlock()
+//!! 	fmt.Printf("Now oldestActiveTwigID %d serialNum %d\n", ctx.oldestActiveTwigID, ctx.serialNum)
+//!! 	endID := ctx.oldestActiveTwigID - 1 - int64(ctx.rs.GetUint32()%ctx.cfg.PruneToOldestMaxDist)
+//!! 	fmt.Printf("Now pruneTree(%f) %d %d\n", ctx.getRatio(), ctx.lastPrunedTwigID, endID)
+//!! 	if endID - ctx.lastPrunedTwigID >= datatree.MinPruneCount {
+//!! 		fmt.Printf("Now run PruneTwigs %d %d oldestActiveTwigID %d\n", ctx.lastPrunedTwigID, endID, ctx.oldestActiveTwigID)
+//!! 		bz := ctx.tree.PruneTwigs(ctx.lastPrunedTwigID, endID)
+//!! 		ctx.edgeNodes = datatree.BytesToEdgeNodes(bz)
+//!! 		fmt.Printf("Here the edgeNodes %v\n", ctx.edgeNodes)
+//!! 		ctx.lastPrunedTwigID = endID
+//!! 	}
+//!! }
+
 func (ctx *Context) pruneTree() {
 	fmt.Printf("Try pruneTree %f %d %d\n", ctx.getRatio(), ctx.activeCount, ctx.serialNum - ctx.oldestActiveSN())
 	for ctx.getRatio() < PruneRatio {
-		entries := ctx.tree.GetActiveEntriesInTwig(ctx.oldestActiveTwigID)
-		for entry := range entries {
-			sn := entry.SerialNum
+		entryChan := ctx.tree.GetActiveEntriesInTwig(ctx.oldestActiveTwigID)
+		for entryBz := range entryChan {
+			sn := datatree.ExtractSerialNum(entryBz)
 			if sn < 0 || sn > (1<<31) {
 				fmt.Printf("Why? sn=%d\n", sn)
 			}
 			if ctx.tree.GetActiveBit(sn) {
 				ctx.tree.DeactiviateEntry(sn)
-				entry.SerialNum = ctx.serialNum
+				//!! fmt.Printf("Fuck0 %#v\n", entryBz)
+				datatree.UpdateSerialNum(entryBz, ctx.serialNum)
+				//!! fmt.Printf("Fuck1 %#v\n", entryBz)
+				ctx.tree.AppendEntryRawBytes(entryBz, ctx.serialNum)
 				ctx.serialNum++
-				ctx.tree.AppendEntry(entry)
 			}
 		}
 		ctx.tree.EvictTwig(ctx.oldestActiveTwigID)

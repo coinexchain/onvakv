@@ -10,6 +10,7 @@ import (
 	"sort"
 
 	"github.com/dterei/gotsc"
+	sha256 "github.com/minio/sha256-simd"
 )
 
 //var Debug bool
@@ -23,7 +24,7 @@ const (
 	nodesPath = "nodes.dat"
 	mtree4YTPath = "mtree4YT.dat"
 	twigsPath = "twigs.dat"
-	DeactivedSNListMaxLen = 15
+	DeactivedSNListMaxLen = 64
 )
 
 /*
@@ -198,7 +199,7 @@ type Tree struct {
 	youngestTwigID     int64
 	activeTwigs        map[int64]*Twig
 	mtree4YoungestTwig [4096][32]byte
-	leave4YoungestTwig [2048][]byte
+	leave4YoungestTwig [2048][2][]byte
 
 	// The following variables are only used during the execution of one block
 	mtree4YTChangeStart int
@@ -269,7 +270,7 @@ func (tree *Tree) TruncateFiles(entryFileSize, twigMtFileSize int64) {
 }
 
 func (tree *Tree) ReadEntry(pos int64) (entry *Entry) {
-	entry, _, _ = tree.entryFile.ReadEntry(pos)
+	entry, _ = tree.entryFile.ReadEntry(pos)
 	return
 }
 
@@ -302,25 +303,41 @@ func (tree *Tree) DeactiviateEntry(sn int64) int {
 }
 
 func (tree *Tree) AppendEntry(entry *Entry) int64 {
+	// write the entry while flushing deactivedSNList
+	bz := EntryToBytes(*entry, tree.deactivedSNList)
+	tree.deactivedSNList = tree.deactivedSNList[:0] // clear its content
+	return tree.appendEntry([2][]byte{bz, nil}, entry.SerialNum)
+}
+
+func (tree *Tree) AppendEntryRawBytes(entryBz []byte, sn int64) int64 {
+	// write the entry while flushing deactivedSNList
+	entryBz[0] = byte(len(tree.deactivedSNList)) // change 1b snlist length
+	bz := SNListToBytes(tree.deactivedSNList)
+	tree.deactivedSNList = tree.deactivedSNList[:0] // clear its content
+	return tree.appendEntry([2][]byte{entryBz, bz}, sn)
+}
+
+func (tree *Tree) appendEntry(bzTwo [2][]byte, sn int64) int64 {
 	//update youngestTwigID
-	twigID := entry.SerialNum >> TwigShift
+	twigID := sn >> TwigShift
 	tree.youngestTwigID = twigID
 	// mark this entry as valid
-	tree.ActiviateEntry(entry.SerialNum)
+	tree.ActiviateEntry(sn)
 	// record ChangeStart/ChangeEnd for endblock sync
-	position := int(entry.SerialNum & TwigMask)
+	position := int(sn & TwigMask)
 	if tree.mtree4YTChangeStart == -1 {
 		tree.mtree4YTChangeStart = position
 	}
 	tree.mtree4YTChangeEnd = position
 
-	// write the entry while flushing deactivedSNList
-	bz := EntryToBytes(*entry, tree.deactivedSNList)
-	tree.deactivedSNList = tree.deactivedSNList[:0] // clear its content
-	pos := tree.entryFile.Append(bz)
+	pos := tree.entryFile.Append(bzTwo)
 	// update the corresponding leaf of merkle tree
 	//copy(tree.mtree4YoungestTwig[LeafCountInTwig+position][:], hash(bz))
-	tree.leave4YoungestTwig[position] = bz
+	tree.leave4YoungestTwig[position] = bzTwo
+
+	//!! if bzTwo[1] != nil {
+	//!! 	fmt.Printf("Fuck bzTwo pos %d %#v\n", pos, bzTwo)
+	//!! }
 
 	if position == 0 { // when this is the first entry of current twig
 		//fmt.Printf("Here FirstEntryPos of %d : %d\n", twigID, pos)
@@ -334,12 +351,17 @@ func (tree *Tree) AppendEntry(entry *Entry) int64 {
 		tree.youngestTwigID++
 		tree.activeTwigs[tree.youngestTwigID] = CopyNullTwig()
 		tree.mtree4YoungestTwig = NullMT4Twig
-		tree.touchedPosOf512b[(entry.SerialNum+1)/512] = struct{}{}
+		tree.touchedPosOf512b[(sn+1)/512] = struct{}{}
 	}
 	return pos
 }
 
-func (tree *Tree) GetActiveEntriesInTwig(twigID int64) chan *Entry {
+func (tree *Tree) GetActiveEntriesInTwigOld(twigID int64) chan *Entry {
+	twig := tree.activeTwigs[twigID]
+	return tree.entryFile.GetActiveEntriesInTwigOld(twig)
+}
+
+func (tree *Tree) GetActiveEntriesInTwig(twigID int64) chan []byte {
 	twig := tree.activeTwigs[twigID]
 	return tree.entryFile.GetActiveEntriesInTwig(twig)
 }
@@ -614,9 +636,12 @@ func (tree *Tree) syncMT4YoungestTwig() {
 		for {
 			myIdx := atomic.AddInt64(&sharedIdx, 1)
 			if myIdx >= int64(len(tree.leave4YoungestTwig)) {break}
-			if tree.leave4YoungestTwig[myIdx] == nil {continue}
-			copy(tree.mtree4YoungestTwig[LeafCountInTwig+myIdx][:], hash(tree.leave4YoungestTwig[myIdx]))
-			tree.leave4YoungestTwig[myIdx] = nil
+			if tree.leave4YoungestTwig[myIdx][0] == nil {continue}
+			h := sha256.New()
+			h.Write(tree.leave4YoungestTwig[myIdx][0])
+			h.Write(tree.leave4YoungestTwig[myIdx][1])
+			copy(tree.mtree4YoungestTwig[LeafCountInTwig+myIdx][:], h.Sum(nil))
+			tree.leave4YoungestTwig[myIdx][0] = nil
 		}
 	})
 	var h Hasher

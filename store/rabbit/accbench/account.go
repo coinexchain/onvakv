@@ -235,6 +235,8 @@ func GenerateAccount(accountSN int64, rs randsrc.RandSrc) Account {
 }
 
 func RunGenerateAccounts(numAccounts int, randFilename string, jsonFile string) {
+	tscOverhead = gotsc.TSCOverhead()
+
 	addr2num := make(map[[AddrLen]byte]uint64)
 	rs := randsrc.NewRandSrcFromFile(randFilename)
 	okv, err := onvakv.NewOnvaKV("./onvakv4test", false, [][]byte{GuardStart, GuardEnd})
@@ -287,6 +289,7 @@ func RunGenerateAccounts(numAccounts int, randFilename string, jsonFile string) 
 	fmt.Printf("write time %d\n", datatree.TotalWriteTime)
 	fmt.Printf("read time %d\n", datatree.TotalReadTime)
 	fmt.Printf("sync time %d\n", datatree.TotalSyncTime)
+	okv.PrintMetaInfo()
 	root.Close()
 }
 

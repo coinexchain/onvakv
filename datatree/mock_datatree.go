@@ -30,6 +30,11 @@ func (dt *MockDataTree) DeactiviateEntry(sn int64) int {
 	return 0
 }
 
+func (dt *MockDataTree) AppendEntryRawBytes(entryBz []byte, sn int64) int64 {
+	e := EntryFromRawBytes(entryBz)
+	return dt.AppendEntry(e)
+}
+
 func (dt *MockDataTree) AppendEntry(entry *Entry) int64 {
 	sn := entry.SerialNum
 	twigID := sn >> TwigShift
@@ -60,14 +65,14 @@ func (dt *MockDataTree) EvictTwig(twigID int64) {
 	delete(dt.twigs, twigID)
 }
 
-func (dt *MockDataTree) GetActiveEntriesInTwig(twigID int64) chan *Entry {
-	res := make(chan *Entry, 100)
+func (dt *MockDataTree) GetActiveEntriesInTwig(twigID int64) chan []byte {
+	res := make(chan []byte, 100)
 	go func() {
 		twig := dt.twigs[twigID]
 		for i, active := range twig.activeBits {
 			if active {
 				entry := twig.entries[i]
-				res <- &entry
+				res <- EntryToBytes(entry, nil)
 			}
 		}
 	}()

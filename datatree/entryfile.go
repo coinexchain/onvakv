@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"math"
 
 	"github.com/coinexchain/onvakv/types"
 )
@@ -13,8 +12,9 @@ type Entry = types.Entry
 
 const MaxEntryBytes int = (1 << 24) - 1
 
-var MagicBytes = [8]byte{byte('I'), byte('L'), byte('O'), byte('V'), byte('E'), byte('Y'), byte('O'), byte('U')}
+var MagicBytes = [8]byte{byte(255), byte('I'), byte('L'), byte('O'), byte('V'), byte('E'), byte('U'), byte(255)}
 
+var dbg bool
 
 func DummyEntry(sn int64) *Entry {
 	return &Entry{
@@ -40,27 +40,105 @@ func NullEntry() Entry {
 
 // Entry serialization format:
 // magicBytes 8-bytes
-// 32b-totalLength (this length does not include padding, checksum and this field itself)
+// 8b snList length
+// 24b-totalLength (this length does not include padding, snList and this field itself)
 // magicBytesPos(list of 32b-int, -1 for ending), posistions are relative to the end of 32b-totalLength
 // normalPayload
-// DeactivedSerialNumList (list of 64b-int, -1 for ending)
+// DeactivedSerialNumList (list of 64b-int)
 // padding-zero-bytes
 
-const MSB32 = uint32(1<<31)
+const (
+	MSB32 = uint32(1<<31)
+)
+
+func PutUint24(b []byte, n uint32) {
+	if n == 0 {
+		panic("here PutUint24")
+	}
+	b[0] = byte(n)
+	b[1] = byte(n>>8)
+	b[2] = byte(n>>16)
+}
+
+func GetUint24(b []byte) (n uint32) {
+	n = uint32(b[0])
+	n |= uint32(b[1]) << 8
+	n |= uint32(b[2]) << 16
+	if n == 0 {
+		panic("here GetUint24")
+	}
+	return
+}
+
+//!! func SkipPosList(bz []byte) []byte {
+//!! 	for i := 0; i + 4 < len(bz); i+=4 {
+//!! 		if (bz[i]&bz[i+1]&bz[i+2]&bz[i+3]) == 0xFF {
+//!! 			return bz[i+4:]
+//!! 		}
+//!! 	}
+//!! 	return nil
+//!! }
+
+func ExtractKeyFromRawBytes(b []byte) []byte {
+	bb := b[4:]
+	if (bb[0]&bb[1]&bb[2]&bb[3]) == 0xFF { // No MagicBytes to recover
+		length := int(binary.LittleEndian.Uint32(bb[4:8]))
+		return append([]byte{}, bb[8:8+length]...)
+	}
+	bb = append([]byte{}, b[4:]...)
+	n := recoverMagicBytes(bb)
+	bb = bb[n:]
+	length := int(binary.LittleEndian.Uint32(bb[:4]))
+	return append([]byte{}, bb[4:4+length]...)
+}
+
+func EntryFromRawBytes(b []byte) *Entry {
+	bb := b[4:]
+	if (bb[0]&bb[1]&bb[2]&bb[3]) == 0xFF { // No MagicBytes to recover
+		e, _ := EntryFromBytes(bb[4:], 0)
+		return e
+	}
+	bb = append([]byte{}, b[4:]...)
+	n := recoverMagicBytes(bb)
+	e, _ := EntryFromBytes(bb[n+4:], 0)
+	return e
+}
+
+func ExtractSerialNum(entryBz []byte) int64 {
+	return int64(binary.LittleEndian.Uint64(entryBz[len(entryBz)-8:]))
+}
+
+func UpdateSerialNum(entryBz []byte, sn int64) {
+	binary.LittleEndian.PutUint64(entryBz[len(entryBz)-8:], uint64(sn))
+}
+
+func SNListToBytes(deactivedSerialNumList []int64) []byte {
+	res := make([]byte, len(deactivedSerialNumList) * 8)
+	i := 0
+	for _, sn := range deactivedSerialNumList {
+		binary.LittleEndian.PutUint64(res[i:i+8], uint64(sn))
+		i += 8
+	}
+	return res
+}
 
 func EntryToBytes(entry Entry, deactivedSerialNumList []int64) []byte {
-	length := 4 + 4                                                        // 32b-totalLength and empty magicBytesPos
+	length := 4 + 4                                                        // 32b-length and empty magicBytesPos
 	length += 4*3 + len(entry.Key) + len(entry.Value) + len(entry.NextKey) // Three strings
 	length += 8 * 3                                                        // Three int64
-	length += (len(deactivedSerialNumList) + 1) * 8
+	length += len(deactivedSerialNumList) * 8
 	b := make([]byte, length)
 
+	b[0] = byte(len(deactivedSerialNumList))
 	const start = 8
 	writeEntryPayload(b[start:], entry, deactivedSerialNumList)
 
 	magicBytesPosList := getAllPos(b[start:], MagicBytes[:])
 	if len(magicBytesPosList) == 0 {
-		binary.LittleEndian.PutUint32(b[:4], uint32(length-4))
+		//!! if dbg {
+		//!! 	fmt.Printf("here-length %d %d\n", length, length-4-len(deactivedSerialNumList)*8)
+		//!! }
+		PutUint24(b[1:4], uint32(length-4-len(deactivedSerialNumList)*8))
 		binary.LittleEndian.PutUint32(b[4:8], ^uint32(0))
 		return b
 	}
@@ -72,8 +150,6 @@ func EntryToBytes(entry Entry, deactivedSerialNumList []int64) []byte {
 	}
 	length += 4 * len(magicBytesPosList)
 	buf := make([]byte, length)
-	// Re-write the new length. minus 4 because the first 4 bytes of length isn't included
-	binary.LittleEndian.PutUint32(buf[:4], uint32(length-4))
 
 	bytesAdded := 4 * len(magicBytesPosList)
 	var i int
@@ -83,6 +159,12 @@ func EntryToBytes(entry Entry, deactivedSerialNumList []int64) []byte {
 	}
 	binary.LittleEndian.PutUint32(buf[i*4+4:i*4+8], ^uint32(0))
 	copy(buf[i*4+8:], b[8:])
+	// Re-write the new length. minus 4 because the first 4 bytes of length isn't included
+	buf[0] = byte(len(deactivedSerialNumList))
+	PutUint24(buf[1:4], uint32(length-4-len(deactivedSerialNumList)*8))
+	//!! if dbg {
+	//!! 	fmt.Printf("there-length %d %d\n", length, length-4-len(deactivedSerialNumList)*8)
+	//!! }
 	return buf
 }
 
@@ -114,7 +196,6 @@ func writeEntryPayload(b []byte, entry Entry, deactivedSerialNumList []int64) {
 		binary.LittleEndian.PutUint64(b[i:i+8], uint64(sn))
 		i += 8
 	}
-	binary.LittleEndian.PutUint64(b[i:i+8], math.MaxUint64)
 }
 
 func getAllPos(s, sep []byte) (allpos []int) {
@@ -128,7 +209,7 @@ func getAllPos(s, sep []byte) (allpos []int) {
 	return
 }
 
-func EntryFromBytes(b []byte) (*Entry, []int64) {
+func EntryFromBytes(b []byte, numberOfSN int) (*Entry, []int64) {
 	entry := &Entry{}
 	i := 0
 
@@ -154,12 +235,14 @@ func EntryFromBytes(b []byte) (*Entry, []int64) {
 	entry.SerialNum = int64(binary.LittleEndian.Uint64(b[i : i+8]))
 	i += 8
 
-	var deactivedSerialNumList []int64
-	sn := binary.LittleEndian.Uint64(b[i : i+8])
-	for sn != math.MaxUint64 {
-		deactivedSerialNumList = append(deactivedSerialNumList, int64(sn))
+	if numberOfSN == 0 {
+		return entry, nil
+	}
+
+	deactivedSerialNumList := make([]int64, numberOfSN)
+	for j := range deactivedSerialNumList {
+		deactivedSerialNumList[j] = int64(binary.LittleEndian.Uint64(b[i : i+8]))
 		i += 8
-		sn = binary.LittleEndian.Uint64(b[i : i+8])
 	}
 
 	return entry, deactivedSerialNumList
@@ -178,7 +261,7 @@ func getPaddingSize(length int) int {
 	}
 }
 
-func (ef *EntryFile) readMagicBytesAndLength(off int64) (lengthInt int64, lengthBytes []byte) {
+func (ef *EntryFile) readMagicBytesAndLength(off int64) (length int64, numberOfSN int) {
 	var buf [12]byte
 	err := ef.HPFile.ReadAt(buf[:], off)
 	if err != nil {
@@ -188,11 +271,11 @@ func (ef *EntryFile) readMagicBytesAndLength(off int64) (lengthInt int64, length
 		fmt.Printf("Now off %d %x\n", off, off)
 		panic("Invalid MagicBytes")
 	}
-	length := binary.LittleEndian.Uint32(buf[8:12])
+	length = int64(GetUint24(buf[9:12]))
 	if int(length) >= MaxEntryBytes {
 		panic("Entry to long")
 	}
-	return int64(length), buf[8:12]
+	return length, int(buf[8])
 }
 
 func getNextPos(off, length int64) int64 {
@@ -205,17 +288,25 @@ func getNextPos(off, length int64) int64 {
 
 }
 
-func (ef *EntryFile) ReadEntry(off int64) (*Entry, []int64, int64) {
-	length, _ := ef.readMagicBytesAndLength(off)
-	nextPos := getNextPos(off, int64(length))
-	b := make([]byte, 12+int(length)) // include 12 (magicbytes and length)
-	err := ef.HPFile.ReadAt(b, off)
-	b = b[12:] // ignore magicbytes and length
-	if err != nil {
-		panic(err)
-	}
-	var n int
-	for n = 0; n < int(length); n += 4 { // recover magic bytes in payload
+func (ef *EntryFile) ReadEntryAndSNList(off int64) (entry *Entry, deactivedSerialNumList []int64, nextPos int64) {
+	entryBz, numberOfSN, nextPos := ef.readEntry(off, true, false)
+	entry, deactivedSerialNumList = EntryFromBytes(entryBz, numberOfSN)
+	return
+}
+
+func (ef *EntryFile) ReadEntry(off int64) (entry *Entry, nextPos int64) {
+	entryBz, numberOfSN, nextPos := ef.readEntry(off, false, false)
+	entry, _ = EntryFromBytes(entryBz, numberOfSN)
+	return
+}
+
+func (ef *EntryFile) ReadEntryRawBytes(off int64) (entryBz []byte, nextPos int64) {
+	entryBz, _, nextPos = ef.readEntry(off, false, true)
+	return
+}
+
+func recoverMagicBytes(b []byte) (n int) {
+	for n = 0; n + 4 < len(b); n += 4 { // recover magic bytes in payload
 		pos := binary.LittleEndian.Uint32(b[n : n+4])
 		if pos == ^(uint32(0)) {
 			n += 4
@@ -226,8 +317,29 @@ func (ef *EntryFile) ReadEntry(off int64) (*Entry, []int64, int64) {
 		}
 		copy(b[int(pos)+4:int(pos)+12], MagicBytes[:])
 	}
-	entry, deactivedSerialNumList := EntryFromBytes(b[n:length])
-	return entry, deactivedSerialNumList, nextPos
+	return
+}
+
+func (ef *EntryFile) readEntry(off int64, withSNList, useRaw bool) (entrybz []byte, numberOfSN int, nextPos int64) {
+	length, numberOfSN := ef.readMagicBytesAndLength(off)
+	nextPos = getNextPos(off, int64(length)+8*int64(numberOfSN))
+	if withSNList {
+		length += 8 * int64(numberOfSN) // ignore snlist
+	} else {
+		numberOfSN = 0
+	}
+	b := make([]byte, 12+int(length)) // include 12 (magicbytes and length)
+	err := ef.HPFile.ReadAt(b, off)
+	origB := b
+	b = b[12:] // ignore magicbytes and length
+	if err != nil {
+		panic(err)
+	}
+	if useRaw {
+		return origB[8:], numberOfSN, nextPos
+	}
+	n := recoverMagicBytes(b)
+	return b[n:length], numberOfSN, nextPos
 }
 
 func NewEntryFile(bufferSize, blockSize int, dirName string) (res EntryFile, err error) {
@@ -263,13 +375,22 @@ func (ef *EntryFile) PruneHead(off int64) {
 	}
 }
 
-func (ef *EntryFile) Append(b []byte) (pos int64) {
-	var bb [3][]byte
+func (ef *EntryFile) Append(b [2][]byte) (pos int64) {
+	//!! if b[0][1] == 0 && b[0][2] == 0  && b[0][3] == 0 {
+	//!! 	fmt.Printf("%#v\n", b)
+	//!! 	panic("here in Append")
+	//!! }
+	var bb [4][]byte
 	bb[0] = MagicBytes[:]
-	bb[1] = b
-	paddingSize := getPaddingSize(len(bb[1]))
-	bb[2] = make([]byte, paddingSize) // padding zero bytes
+	bb[1] = b[0]
+	bb[2] = b[1]
+	paddingSize := getPaddingSize(len(b[0])+len(b[1]))
+	bb[3] = make([]byte, paddingSize) // padding zero bytes
 	pos, err := ef.HPFile.Append(bb[:])
+	//!! if pos > 108996000 {
+	//!! 	dbg = true
+	//!! 	fmt.Printf("Append pos %d %#v len(bb[1]) %d padding %d\n", pos, bb[:], len(bb[1]), paddingSize)
+	//!! }
 	if pos%8 != 0 {
 		panic("Entries are not aligned")
 	}
@@ -280,19 +401,38 @@ func (ef *EntryFile) Append(b []byte) (pos int64) {
 	return
 }
 
-func (ef *EntryFile) GetActiveEntriesInTwig(twig *Twig) chan *Entry {
+func (ef *EntryFile) GetActiveEntriesInTwig(twig *Twig) chan []byte {
+	res := make(chan []byte, 100)
+	go func() {
+		start := twig.FirstEntryPos
+		for i := 0; i < LeafCountInTwig; i++ {
+			if twig.getBit(i) {
+				entryBz, next := ef.ReadEntryRawBytes(start)
+				//!! fmt.Printf("Why start %d entryBz %#v\n", start, entryBz)
+				start = next
+				res <- entryBz
+			} else { // skip an inactive entry
+				length, numberOfSN := ef.readMagicBytesAndLength(start)
+				start = getNextPos(start, length+8*int64(numberOfSN))
+			}
+		}
+		close(res)
+	}()
+	return res
+}
+
+func (ef *EntryFile) GetActiveEntriesInTwigOld(twig *Twig) chan *Entry {
 	res := make(chan *Entry, 100)
 	go func() {
 		start := twig.FirstEntryPos
 		for i := 0; i < LeafCountInTwig; i++ {
 			if twig.getBit(i) {
-				entry, _, next := ef.ReadEntry(start)
+				entry, next := ef.ReadEntry(start)
 				start = next
 				res <- entry
 			} else { // skip an inactive entry
-				var length int64
-				length, _ = ef.readMagicBytesAndLength(start)
-				start = getNextPos(start, length)
+				length, numberOfSN := ef.readMagicBytesAndLength(start)
+				start = getNextPos(start, length+8*int64(numberOfSN))
 			}
 		}
 		close(res)

@@ -485,7 +485,7 @@ func TestTreeAppendEntry(t *testing.T) {
 	tree.EndBlock()
 
 	for i, pos := range posList {
-		entry, snList, _ := tree.entryFile.ReadEntry(pos)
+		entry, snList, _ := tree.entryFile.ReadEntryAndSNList(pos)
 		assert.Equal(t, int64(i), entry.SerialNum)
 		if i == TwigMask {
 			assert.Equal(t, deactSNList, snList)
@@ -513,10 +513,14 @@ func TestTreeAppendEntry(t *testing.T) {
 	assert.Equal(t, false, tree.TwigCanBePruned(0))
 	assert.Equal(t, false, tree.TwigCanBePruned(1))
 
-	entryList := tree.GetActiveEntriesInTwig(0)
+	entryChan := tree.GetActiveEntriesInTwig(0)
 	i := 0
-	for entry := range entryList {
-		assert.Equal(t, activeList[i], entry.SerialNum)
+	for entryBz := range entryChan {
+		sn := int64(binary.LittleEndian.Uint64(entryBz[len(entryBz)-8:]))
+		if activeList[i] != sn {
+			fmt.Printf("entryBz %#v sn %x\n", entryBz, activeList[i])
+		}
+		assert.Equal(t, activeList[i], sn)
 		i++
 	}
 

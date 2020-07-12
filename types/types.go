@@ -58,10 +58,11 @@ type EntryHandler func(pos int64, entry *Entry, deactivedSNList []int64)
 type DataTree interface {
 	DeactiviateEntry(sn int64) int
 	AppendEntry(entry *Entry) int64
+	AppendEntryRawBytes(entryBz []byte, sn int64) int64
 	ReadEntry(pos int64) *Entry
 	GetActiveBit(sn int64) bool
 	EvictTwig(twigID int64)
-	GetActiveEntriesInTwig(twigID int64) chan *Entry
+	GetActiveEntriesInTwig(twigID int64) chan []byte
 	ScanEntries(oldestActiveTwigID int64, outChan chan EntryX)
 	TwigCanBePruned(twigID int64) bool
 	PruneTwigs(startID, endID int64) []byte
@@ -73,6 +74,9 @@ type DataTree interface {
 
 type MetaDB interface {
 	Commit()
+	ReloadFromKVDB()
+	PrintInfo()
+
 	SetCurrHeight(h int64)
 	GetCurrHeight() int64
 

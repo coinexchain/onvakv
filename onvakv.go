@@ -60,7 +60,7 @@ func NewOnvaKV4Mock(startEndKeys [][]byte) *OnvaKV {
 	return okv
 }
 
-func NewOnvaKV(dirName string, queryHistory bool, startEndKeys [][]byte) (*OnvaKV, error) {
+func NewOnvaKV(dirName string, canQueryHistory bool, startEndKeys [][]byte) (*OnvaKV, error) {
 	tscOverhead = gotsc.TSCOverhead()
 	_, err := os.Stat(dirName)
 	dirNotExists := os.IsNotExist(err)
@@ -81,10 +81,14 @@ func NewOnvaKV(dirName string, queryHistory bool, startEndKeys [][]byte) (*OnvaK
 		panic(err)
 	}
 	okv.meta = metadb.NewMetaDB(okv.rocksdb)
+	if !dirNotExists {
+		okv.meta.ReloadFromKVDB()
+		okv.meta.PrintInfo()
+	}
 
 	if dirNotExists { // Create a new database in this dir
 		okv.datTree = datatree.NewEmptyTree(defaultFileSize, dirName)
-		if queryHistory {
+		if canQueryHistory {
 			okv.idxTree = indextree.NewNVTreeMem(okv.rocksdb)
 		} else {
 			okv.idxTree = indextree.NewNVTreeMem(nil)
@@ -113,7 +117,7 @@ func NewOnvaKV(dirName string, queryHistory bool, startEndKeys [][]byte) (*OnvaK
 
 	if dirNotExists {
 		//do nothing
-	} else if queryHistory { // use rocksdb to keep the historical index
+	} else if canQueryHistory { // use rocksdb to keep the historical index
 		okv.idxTree = indextree.NewNVTreeMem(okv.rocksdb)
 		err = okv.idxTree.Init(nil)
 		if err != nil {
@@ -133,6 +137,10 @@ func NewOnvaKV(dirName string, queryHistory bool, startEndKeys [][]byte) (*OnvaK
 
 	okv.meta.SetIsRunning(true)
 	return okv, nil
+}
+
+func (okv *OnvaKV) PrintMetaInfo() {
+	okv.meta.PrintInfo()
 }
 
 func (okv *OnvaKV) Close() {
@@ -281,6 +289,10 @@ func (okv *OnvaKV) numOfKeptEntries() int64 {
 	return okv.meta.GetMaxSerialNum() - okv.meta.GetOldestActiveTwigID()*datatree.LeafCountInTwig
 }
 
+func (okv *OnvaKV) GetCurrHeight() int64 {
+	return okv.meta.GetCurrHeight()
+}
+
 func (okv *OnvaKV) BeginWrite(height int64) {
 	okv.rocksdb.OpenNewBatch()
 	okv.idxTree.BeginWrite(height)
@@ -399,7 +411,7 @@ func (okv *OnvaKV) update() {
 			hotEntry.IsModified = true
 		}
 	}
-	//@ start = gotsc.BenchStart()
+	start := gotsc.BenchStart()
 	// update stored data
 	for _, hotEntry := range okv.cachedEntries {
 		if !(hotEntry.IsModified || hotEntry.IsTouchedByNext) {
@@ -427,7 +439,7 @@ func (okv *OnvaKV) update() {
 			okv.idxTree.Set(ptr.Key, uint64(pos))
 		}
 	}
-	//@ Phase1n2Time += gotsc.BenchEnd() - start - tscOverhead
+	Phase1n2Time += gotsc.BenchEnd() - start - tscOverhead
 }
 
 func (okv *OnvaKV) DeactiviateEntry(sn int64) {
@@ -465,29 +477,33 @@ var Phase1n2Time, Phase1Time, Phase2Time, Phase3Time, Phase4Time, Phase0Time, ts
 
 func (okv *OnvaKV) EndWrite() {
 	okv.update()
-	//@ start := gotsc.BenchStart()
+	start := gotsc.BenchStart()
 	//if okv.meta.GetActiveEntryCount() != int64(okv.idxTree.ActiveCount()) - 2 {
 	//	panic(fmt.Sprintf("Fuck meta.GetActiveEntryCount %d okv.idxTree.ActiveCount %d\n", okv.meta.GetActiveEntryCount(), okv.idxTree.ActiveCount()))
 	//}
-	//fmt.Printf("numOfKeptEntries %d ActiveCount %d x3 %d\n", okv.numOfKeptEntries(), okv.idxTree.ActiveCount(), okv.idxTree.ActiveCount()*3)
+	//fmt.Printf("begin numOfKeptEntries %d ActiveCount %d x2 %d\n", okv.numOfKeptEntries(), okv.idxTree.ActiveCount(), okv.idxTree.ActiveCount()*2)
 	for okv.numOfKeptEntries() > int64(okv.idxTree.ActiveCount())*KeptEntriesToActiveEntriesRatio &&
 		int64(okv.idxTree.ActiveCount()) > StartReapThres {
 		twigID := okv.meta.GetOldestActiveTwigID()
-		entries := okv.datTree.GetActiveEntriesInTwig(twigID)
-		for e := range entries {
-			if string(e.Key) == "dummy" {panic(fmt.Sprintf("an active entry is dummy %#v", e))}
-			okv.DeactiviateEntry(e.SerialNum)
-			e.SerialNum = okv.meta.GetMaxSerialNum()
+		entryBzChan := okv.datTree.GetActiveEntriesInTwig(twigID)
+		for entryBz := range entryBzChan {
+			sn := datatree.ExtractSerialNum(entryBz)
+			okv.DeactiviateEntry(sn)
+			sn = okv.meta.GetMaxSerialNum()
+			datatree.UpdateSerialNum(entryBz, sn)
 			okv.meta.IncrMaxSerialNum()
-			pos := okv.datTree.AppendEntry(e)
-			okv.idxTree.Set(e.Key, uint64(pos))
+			pos := okv.datTree.AppendEntryRawBytes(entryBz, sn)
+			key := datatree.ExtractKeyFromRawBytes(entryBz)
+			okv.idxTree.Set(key, uint64(pos))
 		}
 		okv.datTree.EvictTwig(twigID)
 		okv.meta.IncrOldestActiveTwigID()
 	}
+	Phase3Time += gotsc.BenchEnd() - start - tscOverhead
+	start = gotsc.BenchStart()
+	//fmt.Printf("end numOfKeptEntries %d ActiveCount %d x2 %d\n", okv.numOfKeptEntries(), okv.idxTree.ActiveCount(), okv.idxTree.ActiveCount()*2)
 	root := okv.datTree.EndBlock()
-	//@ Phase3Time += gotsc.BenchEnd() - start - tscOverhead
-	//@ start = gotsc.BenchStart()
+	Phase4Time += gotsc.BenchEnd() - start - tscOverhead
 	okv.rootHash = root
 	okv.k2heMap = NewBucketMap(heMapSize) // clear content
 	okv.k2nkMap = NewBucketMap(nkMapSize) // clear content
@@ -501,7 +517,6 @@ func (okv *OnvaKV) EndWrite() {
 	okv.meta.Commit()
 	okv.idxTree.EndWrite()
 	okv.rocksdb.CloseOldBatch()
-	//@ Phase4Time += gotsc.BenchEnd() - start - tscOverhead
 }
 
 func (okv *OnvaKV) InitGuards(startKey, endKey []byte) {

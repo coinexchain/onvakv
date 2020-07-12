@@ -1,6 +1,7 @@
 package metadb
 
 import (
+	"fmt"
 	"encoding/binary"
 
 	"github.com/coinexchain/onvakv/indextree"
@@ -223,4 +224,15 @@ func (db *MetaDBWithTMDB) Init() {
 	db.SetTwigMtFileSize(0)
 	db.SetEntryFileSize(0)
 	db.Commit()
+}
+
+func (db *MetaDBWithTMDB) PrintInfo() {
+	fmt.Printf("CurrHeight         %v\n", db.GetCurrHeight())
+	fmt.Printf("TwigMtFileSize     %v\n", db.GetTwigMtFileSize())
+	fmt.Printf("EntryFileSize      %v\n", db.GetEntryFileSize())
+	fmt.Printf("LastPrunedTwig     %v\n", db.GetLastPrunedTwig())
+	fmt.Printf("EdgeNodes          %v\n", db.GetEdgeNodes())
+	fmt.Printf("MaxSerialNum       %v\n", db.GetMaxSerialNum())
+	fmt.Printf("OldestActiveTwigID %v\n", db.GetOldestActiveTwigID())
+	fmt.Printf("IsRunning          %v\n", db.GetIsRunning())
 }

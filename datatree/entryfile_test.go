@@ -51,19 +51,19 @@ func TestEntryFile(t *testing.T) {
 	assert.Equal(t, nil, err)
 
 	bz0 := EntryToBytes(entries[0], dSNL0)
-	pos0 := ef.Append(bz0)
+	pos0 := ef.Append([2][]byte{bz0, nil})
 	bz1 := EntryToBytes(entries[1], dSNL1)
-	pos1 := ef.Append(bz1)
+	pos1 := ef.Append([2][]byte{bz1, nil})
 	bz2 := EntryToBytes(entries[2], dSNL2)
-	pos2 := ef.Append(bz2)
+	pos2 := ef.Append([2][]byte{bz2, nil})
 	bz3 := EntryToBytes(entries[3], dSNL3)
-	pos3 := ef.Append(bz3)
+	pos3 := ef.Append([2][]byte{bz3, nil})
 
 	for i := 0; i < LeafCountInTwig; i+=4 {
-		ef.Append(bz0)
-		ef.Append(bz1)
-		ef.Append(bz2)
-		ef.Append(bz3)
+		ef.Append([2][]byte{bz0, nil})
+		ef.Append([2][]byte{bz1, nil})
+		ef.Append([2][]byte{bz2, nil})
+		ef.Append([2][]byte{bz3, nil})
 		//fmt.Printf("pos for 0: %d\n", ef.Append(bz0))
 		//fmt.Printf("pos for 1: %d\n", ef.Append(bz1))
 		//fmt.Printf("pos for 2: %d\n", ef.Append(bz2))
@@ -76,22 +76,22 @@ func TestEntryFile(t *testing.T) {
 	ef, err = NewEntryFile(8*1024, 128*1024/*128KB*/, "./entryF")
 	assert.Equal(t, nil, err)
 
-	e, l, next := ef.ReadEntry(pos0)
+	e, l, next := ef.ReadEntryAndSNList(pos0)
 	assert.Equal(t, entries[0], *e)
 	assert.Equal(t, dSNL0, l)
 	assert.Equal(t, pos1, next)
 
-	e, l, next = ef.ReadEntry(pos1)
+	e, l, next = ef.ReadEntryAndSNList(pos1)
 	assert.Equal(t, entries[1], *e)
 	assert.Equal(t, dSNL1, l)
 	assert.Equal(t, pos2, next)
 
-	e, l, next = ef.ReadEntry(pos2)
+	e, l, next = ef.ReadEntryAndSNList(pos2)
 	assert.Equal(t, entries[2], *e)
 	assert.Equal(t, 0, len(l))
 	assert.Equal(t, pos3, next)
 
-	e, l, _ = ef.ReadEntry(pos3)
+	e, l, _ = ef.ReadEntryAndSNList(pos3)
 	assert.Equal(t, entries[3], *e)
 	assert.Equal(t, dSNL3, l)
 
@@ -103,7 +103,8 @@ func TestEntryFile(t *testing.T) {
 
 	chanEntries := ef.GetActiveEntriesInTwig(twig)
 	activeEntries := make([]*Entry, 0, 3)
-	for e := range chanEntries {
+	for bz := range chanEntries {
+		e := EntryFromRawBytes(bz)
 		activeEntries = append(activeEntries, e)
 	}
 	assert.Equal(t, 3, len(activeEntries))
