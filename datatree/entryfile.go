@@ -12,7 +12,7 @@ type Entry = types.Entry
 
 const MaxEntryBytes int = (1 << 24) - 1
 
-var MagicBytes = [8]byte{byte(255), byte('I'), byte('L'), byte('O'), byte('V'), byte('E'), byte('U'), byte(255)}
+var MagicBytes = [8]byte{255, 254, 253, 252, 252, 253, 254, 255}
 
 var dbg bool
 
@@ -52,9 +52,9 @@ const (
 )
 
 func PutUint24(b []byte, n uint32) {
-	if n == 0 {
-		panic("here PutUint24")
-	}
+	//!! if n == 0 {
+	//!! 	panic("here PutUint24")
+	//!! }
 	b[0] = byte(n)
 	b[1] = byte(n>>8)
 	b[2] = byte(n>>16)
@@ -64,9 +64,9 @@ func GetUint24(b []byte) (n uint32) {
 	n = uint32(b[0])
 	n |= uint32(b[1]) << 8
 	n |= uint32(b[2]) << 16
-	if n == 0 {
-		panic("here GetUint24")
-	}
+	//!! if n == 0 {
+	//!! 	panic("here GetUint24")
+	//!! }
 	return
 }
 
@@ -133,7 +133,9 @@ func EntryToBytes(entry Entry, deactivedSerialNumList []int64) []byte {
 	const start = 8
 	writeEntryPayload(b[start:], entry, deactivedSerialNumList)
 
-	magicBytesPosList := getAllPos(b[start:], MagicBytes[:])
+	// MagicBytes can not lay in or overlap with these 64b integers
+	stop := len(b) - len(deactivedSerialNumList)*8 - 3*8
+	magicBytesPosList := getAllPos(b[start:stop], MagicBytes[:])
 	if len(magicBytesPosList) == 0 {
 		//!! if dbg {
 		//!! 	fmt.Printf("here-length %d %d\n", length, length-4-len(deactivedSerialNumList)*8)

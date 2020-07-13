@@ -337,7 +337,6 @@ func (tree *Tree) RecoverEntry(pos int64, entry *Entry, deactivedSNList []int64,
 func (tree *Tree) ScanEntries(oldestActiveTwigID int64, outChan chan types.EntryX) {
 	pos := tree.twigMtFile.GetFirstEntryPos(oldestActiveTwigID)
 	size := tree.entryFile.Size()
-	//fmt.Printf("entryFile.Size() %d\n", size)
 	for pos < size {
 		//!! if pos > 108995312 {
 		//!! 	entryBz, nxt := tree.entryFile.ReadEntryRawBytes(pos)
@@ -355,7 +354,7 @@ func (tree *Tree) ScanEntries(oldestActiveTwigID int64, outChan chan types.Entry
 	close(outChan)
 }
 
-func (tree *Tree) RecoverActiveTwigs(oldestActiveTwigID int64) []int64 {
+func (tree *Tree) RecoverActiveTwigs(oldestActiveTwigID int64) []int64 { // TODO maybe concurrent bugs here
 	entryXChan := make(chan types.EntryX, 100)
 	go tree.ScanEntries(oldestActiveTwigID, entryXChan)
 	for e := range entryXChan {

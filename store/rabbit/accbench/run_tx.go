@@ -247,3 +247,13 @@ func RunTx(numBlock int, txFile string) {
 	root.Close()
 }
 
+/*
+phase1 time 659216297850
+phase2 time 492814142134
+onvakv.phase0 time 0
+onvakv.pha1n2 time 244571442010
+onvakv.phase1 time 0
+onvakv.phase2 time 0
+onvakv.phase3 time 49584349112
+onvakv.phase4 time 143403222792
+*/
