@@ -16,7 +16,7 @@ import (
 var TotalWriteTime, TotalReadTime, TotalSyncTime uint64
 
 const (
-	BufferSize = 32*1024*1024
+	BufferSize = 16*1024*1024
 	//BufferSize = 32*1024 //For UnitTest
 	PreReadBufSize = 256*1024
 )
@@ -43,7 +43,7 @@ func NewHPFile(bufferSize, blockSize int, dirName string) (HPFile, error) {
 		buffer:     make([]byte, 0, bufferSize),
 	}
 	if blockSize % bufferSize != 0 {
-		panic(fmt.Sprintf("Invalid blockSize 0x%x", blockSize))
+		panic(fmt.Sprintf("Invalid blockSize 0x%x bufferSize 0x%x", blockSize, bufferSize))
 	}
 	fileInfoList, err := ioutil.ReadDir(dirName)
 	if err != nil {
@@ -136,6 +136,12 @@ func (hpf *HPFile) Truncate(size int64) error {
 
 func (hpf *HPFile) Flush() {
 	//start := gotsc.BenchStart()
+	hpf.mtx.Lock()
+	defer hpf.mtx.Unlock()
+	hpf.flush()
+}
+
+func (hpf *HPFile) flush() {
 	if len(hpf.buffer) != 0 {
 		_, err := hpf.fileMap[hpf.largestID].Write(hpf.buffer)
 		if err != nil {
@@ -151,11 +157,13 @@ func (hpf *HPFile) FlushAsync() {
 	hpf.mtx.Lock()
 	go func() {
 		defer hpf.mtx.Unlock()
-		hpf.Flush()
+		hpf.flush()
 	}()
 }
 
 func (hpf *HPFile) Close() error {
+	hpf.mtx.Lock()
+	defer hpf.mtx.Unlock()
 	for _, file := range hpf.fileMap {
 		err := file.Close()
 		if err != nil {
@@ -240,7 +248,7 @@ func (hpf *HPFile) Append(bufList [][]byte) (int64, error) {
 	}
 	overflowByteCount := hpf.latestFileSize - int64(hpf.blockSize)
 	if overflowByteCount >= 0 {
-		hpf.Flush()
+		hpf.flush()
 		hpf.largestID++
 		fname := fmt.Sprintf("%s/%d-%d", hpf.dirName, hpf.largestID, hpf.blockSize)
 		f, err := os.OpenFile(fname, os.O_RDWR|os.O_CREATE, 0700)

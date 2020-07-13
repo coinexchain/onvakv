@@ -354,7 +354,7 @@ func (tree *Tree) ScanEntries(oldestActiveTwigID int64, outChan chan types.Entry
 	close(outChan)
 }
 
-func (tree *Tree) RecoverActiveTwigs(oldestActiveTwigID int64) []int64 { // TODO maybe concurrent bugs here
+func (tree *Tree) RecoverActiveTwigs(oldestActiveTwigID int64) []int64 {
 	entryXChan := make(chan types.EntryX, 100)
 	go tree.ScanEntries(oldestActiveTwigID, entryXChan)
 	for e := range entryXChan {
