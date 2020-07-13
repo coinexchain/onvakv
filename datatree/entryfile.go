@@ -261,9 +261,9 @@ func getPaddingSize(length int) int {
 	}
 }
 
-func (ef *EntryFile) readMagicBytesAndLength(off int64) (length int64, numberOfSN int) {
+func (ef *EntryFile) readMagicBytesAndLength(off int64, withBuf bool) (length int64, numberOfSN int) {
 	var buf [12]byte
-	err := ef.HPFile.ReadAt(buf[:], off)
+	err := ef.HPFile.ReadAt(buf[:], off, withBuf)
 	if err != nil {
 		panic(err)
 	}
@@ -289,19 +289,19 @@ func getNextPos(off, length int64) int64 {
 }
 
 func (ef *EntryFile) ReadEntryAndSNList(off int64) (entry *Entry, deactivedSerialNumList []int64, nextPos int64) {
-	entryBz, numberOfSN, nextPos := ef.readEntry(off, true, false)
+	entryBz, numberOfSN, nextPos := ef.readEntry(off, true, false, true)
 	entry, deactivedSerialNumList = EntryFromBytes(entryBz, numberOfSN)
 	return
 }
 
 func (ef *EntryFile) ReadEntry(off int64) (entry *Entry, nextPos int64) {
-	entryBz, numberOfSN, nextPos := ef.readEntry(off, false, false)
+	entryBz, numberOfSN, nextPos := ef.readEntry(off, false, false, false)
 	entry, _ = EntryFromBytes(entryBz, numberOfSN)
 	return
 }
 
 func (ef *EntryFile) ReadEntryRawBytes(off int64) (entryBz []byte, nextPos int64) {
-	entryBz, _, nextPos = ef.readEntry(off, false, true)
+	entryBz, _, nextPos = ef.readEntry(off, false, true, true)
 	return
 }
 
@@ -320,8 +320,8 @@ func recoverMagicBytes(b []byte) (n int) {
 	return
 }
 
-func (ef *EntryFile) readEntry(off int64, withSNList, useRaw bool) (entrybz []byte, numberOfSN int, nextPos int64) {
-	length, numberOfSN := ef.readMagicBytesAndLength(off)
+func (ef *EntryFile) readEntry(off int64, withSNList, useRaw, withBuf bool) (entrybz []byte, numberOfSN int, nextPos int64) {
+	length, numberOfSN := ef.readMagicBytesAndLength(off, withBuf)
 	nextPos = getNextPos(off, int64(length)+8*int64(numberOfSN))
 	if withSNList {
 		length += 8 * int64(numberOfSN) // ignore snlist
@@ -329,7 +329,7 @@ func (ef *EntryFile) readEntry(off int64, withSNList, useRaw bool) (entrybz []by
 		numberOfSN = 0
 	}
 	b := make([]byte, 12+int(length)) // include 12 (magicbytes and length)
-	err := ef.HPFile.ReadAt(b, off)
+	err := ef.HPFile.ReadAt(b, off, withBuf)
 	origB := b
 	b = b[12:] // ignore magicbytes and length
 	if err != nil {
@@ -344,6 +344,7 @@ func (ef *EntryFile) readEntry(off int64, withSNList, useRaw bool) (entrybz []by
 
 func NewEntryFile(bufferSize, blockSize int, dirName string) (res EntryFile, err error) {
 	res.HPFile, err = NewHPFile(bufferSize, blockSize, dirName)
+	res.HPFile.InitPreReader()
 	return
 }
 
@@ -412,7 +413,7 @@ func (ef *EntryFile) GetActiveEntriesInTwig(twig *Twig) chan []byte {
 				start = next
 				res <- entryBz
 			} else { // skip an inactive entry
-				length, numberOfSN := ef.readMagicBytesAndLength(start)
+				length, numberOfSN := ef.readMagicBytesAndLength(start, true)
 				start = getNextPos(start, length+8*int64(numberOfSN))
 			}
 		}
@@ -421,21 +422,21 @@ func (ef *EntryFile) GetActiveEntriesInTwig(twig *Twig) chan []byte {
 	return res
 }
 
-func (ef *EntryFile) GetActiveEntriesInTwigOld(twig *Twig) chan *Entry {
-	res := make(chan *Entry, 100)
-	go func() {
-		start := twig.FirstEntryPos
-		for i := 0; i < LeafCountInTwig; i++ {
-			if twig.getBit(i) {
-				entry, next := ef.ReadEntry(start)
-				start = next
-				res <- entry
-			} else { // skip an inactive entry
-				length, numberOfSN := ef.readMagicBytesAndLength(start)
-				start = getNextPos(start, length+8*int64(numberOfSN))
-			}
-		}
-		close(res)
-	}()
-	return res
-}
+//!! func (ef *EntryFile) GetActiveEntriesInTwigOld(twig *Twig) chan *Entry {
+//!! 	res := make(chan *Entry, 100)
+//!! 	go func() {
+//!! 		start := twig.FirstEntryPos
+//!! 		for i := 0; i < LeafCountInTwig; i++ {
+//!! 			if twig.getBit(i) {
+//!! 				entry, next := ef.ReadEntry(start)
+//!! 				start = next
+//!! 				res <- entry
+//!! 			} else { // skip an inactive entry
+//!! 				length, numberOfSN := ef.readMagicBytesAndLength(start, true)
+//!! 				start = getNextPos(start, length+8*int64(numberOfSN))
+//!! 			}
+//!! 		}
+//!! 		close(res)
+//!! 	}()
+//!! 	return res
+//!! }

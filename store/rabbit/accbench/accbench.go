@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+
+	"github.com/coinexchain/onvakv/datatree"
 )
 
 func printUsage() {
@@ -14,6 +16,9 @@ func printUsage() {
 }
 
 func main() {
+	if datatree.BufferSize < 512*1024 {
+		panic("BufferSize too small")
+	}
 	if len(os.Args) < 3 {
 		printUsage()
 		return

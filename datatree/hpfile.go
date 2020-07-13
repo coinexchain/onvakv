@@ -2,6 +2,7 @@ package datatree
 
 import (
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"strconv"
@@ -15,8 +16,9 @@ import (
 var TotalWriteTime, TotalReadTime, TotalSyncTime uint64
 
 const (
-	//BufferSize = 32*1024*1024
-	BufferSize = 32*1024 //For UnitTest
+	BufferSize = 32*1024*1024
+	//BufferSize = 32*1024 //For UnitTest
+	PreReadBufSize = 256*1024
 )
 
 // Head prune-able file
@@ -29,7 +31,7 @@ type HPFile struct {
 	bufferSize     int
 	buffer         []byte
 	mtx            sync.RWMutex
-
+	preReader      PreReader
 }
 
 func NewHPFile(bufferSize, blockSize int, dirName string) (HPFile, error) {
@@ -93,6 +95,10 @@ func NewHPFile(bufferSize, blockSize int, dirName string) (HPFile, error) {
 		}
 	}
 	return res, nil
+}
+
+func (hpf *HPFile) InitPreReader() {
+	hpf.preReader.Init()
 }
 
 func (hpf *HPFile) Size() int64 {
@@ -159,9 +165,12 @@ func (hpf *HPFile) Close() error {
 	return nil
 }
 
-func (hpf *HPFile) ReadAt(buf []byte, off int64) error {
+func (hpf *HPFile) ReadAt(buf []byte, off int64, withBuf bool) (err error) {
 	hpf.mtx.RLock()
 	defer hpf.mtx.RUnlock()
+	if withBuf {
+		return hpf.readAtWithBuf(buf, off)
+	}
 	//start := gotsc.BenchStart()
 	fileID := off / int64(hpf.blockSize)
 	pos := off % int64(hpf.blockSize)
@@ -169,9 +178,39 @@ func (hpf *HPFile) ReadAt(buf []byte, off int64) error {
 	if !ok {
 		return fmt.Errorf("Can not find the file with id=%d (%d/%d)", fileID, off, hpf.blockSize)
 	}
-	_, err := f.ReadAt(buf, pos)
+	_, err = f.ReadAt(buf, pos)
 	//atomic.AddUint64(&TotalReadTime, gotsc.BenchEnd() - start - tscOverhead)
-	return err
+	return
+}
+
+func (hpf *HPFile) readAtWithBuf(buf []byte, off int64) (err error) {
+	fileID := off / int64(hpf.blockSize)
+	pos := off % int64(hpf.blockSize)
+	f, ok := hpf.fileMap[int(fileID)]
+	if !ok {
+		return fmt.Errorf("Can not find the file with id=%d (%d/%d)", fileID, off, hpf.blockSize)
+	}
+
+	ok = hpf.preReader.TryRead(fileID, pos, buf)
+	if ok {
+		return nil
+	}
+	if len(buf) >= PreReadBufSize || int(pos) + len(buf) > hpf.blockSize {
+		_, err = f.ReadAt(buf, pos)
+		return
+	}
+	part := hpf.preReader.GetToFill(fileID, pos, pos + PreReadBufSize)
+	n, err := f.ReadAt(part, pos)
+	if err == io.EOF {
+		hpf.preReader.end = pos + int64(n)
+	} else if err != nil {
+		return err
+	}
+	ok = hpf.preReader.TryRead(fileID, pos, buf)
+	if !ok {
+		panic("Cannot read data just fetched")
+	}
+	return nil
 }
 
 func (hpf *HPFile) Append(bufList [][]byte) (int64, error) {
@@ -244,3 +283,31 @@ func (hpf *HPFile) PruneHead(off int64) error {
 	}
 	return nil
 }
+
+type PreReader struct {
+	buf    []byte
+	fileID int64
+	start  int64
+	end    int64
+}
+
+func (pr *PreReader) Init() {
+	pr.fileID = -1
+	pr.buf = make([]byte, PreReadBufSize)
+}
+
+func (pr *PreReader) GetToFill(fileID, start, end int64) []byte {
+	pr.fileID = fileID
+	pr.start = start
+	pr.end = end
+	return pr.buf[:end-start]
+}
+
+func (pr *PreReader) TryRead(fileID, start int64, buf []byte) bool {
+	if fileID == pr.fileID && pr.start <= start && start + int64(len(buf)) < pr.end {
+		copy(buf, pr.buf[start-pr.start:])
+		return true
+	}
+	return false
+}
+

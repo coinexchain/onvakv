@@ -45,7 +45,7 @@ func (tf *TwigMtFile) AppendTwig(mtree [][32]byte, firstEntryPos int64) {
 
 func (tf *TwigMtFile) GetFirstEntryPos(twigID int64) int64 {
 	var buf [12]byte
-	err := tf.HPFile.ReadAt(buf[:], twigID*TwigMtSize)
+	err := tf.HPFile.ReadAt(buf[:], twigID*TwigMtSize, false)
 	if err != nil {
 		panic(err)
 	}
@@ -63,7 +63,7 @@ func (tf *TwigMtFile) GetHashNode(twigID int64, hashID int) []byte {
 		panic(fmt.Sprintf("Invalid hashID: %d", hashID))
 	}
 	offset := twigID*int64(TwigMtSize) + 12 + (int64(hashID)-1)*32
-	err := tf.HPFile.ReadAt(buf[:], offset)
+	err := tf.HPFile.ReadAt(buf[:], offset, false)
 	if err != nil {
 		panic(err)
 	}

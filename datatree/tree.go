@@ -356,10 +356,10 @@ func (tree *Tree) appendEntry(bzTwo [2][]byte, sn int64) int64 {
 	return pos
 }
 
-func (tree *Tree) GetActiveEntriesInTwigOld(twigID int64) chan *Entry {
-	twig := tree.activeTwigs[twigID]
-	return tree.entryFile.GetActiveEntriesInTwigOld(twig)
-}
+//!! func (tree *Tree) GetActiveEntriesInTwigOld(twigID int64) chan *Entry {
+//!! 	twig := tree.activeTwigs[twigID]
+//!! 	return tree.entryFile.GetActiveEntriesInTwigOld(twig)
+//!! }
 
 func (tree *Tree) GetActiveEntriesInTwig(twigID int64) chan []byte {
 	twig := tree.activeTwigs[twigID]
