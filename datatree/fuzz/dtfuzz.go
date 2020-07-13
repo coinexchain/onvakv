@@ -92,7 +92,7 @@ func NewContext(cfg FuzzConfig, rs randsrc.RandSrc) *Context {
 	os.RemoveAll(dirName)
 	os.Mkdir(dirName, 0700)
 	return &Context{
-		tree: datatree.NewEmptyTree(defaultFileSize, dirName),
+		tree: datatree.NewEmptyTree(datatree.BufferSize, defaultFileSize, dirName),
 		rs:   rs,
 		cfg:  cfg,
 	}
@@ -229,7 +229,7 @@ func (ctx *Context) endBlock() {
 
 func (ctx *Context) reloadTree() {
 	ctx.tree.Flush()
-	tree1 := datatree.LoadTree(defaultFileSize, dirName)
+	tree1 := datatree.LoadTree(datatree.BufferSize, defaultFileSize, dirName)
 
 	datatree.CompareTreeTwigs(ctx.tree, tree1)
 	datatree.CompareTreeNodes(ctx.tree, tree1)
@@ -240,7 +240,7 @@ func (ctx *Context) reloadTree() {
 
 func (ctx *Context) recoverTree() {
 	ctx.tree.Flush()
-	tree1 := datatree.RecoverTree(defaultFileSize, dirName,
+	tree1 := datatree.RecoverTree(datatree.BufferSize, defaultFileSize, dirName,
 		ctx.edgeNodes, ctx.lastPrunedTwigID, ctx.oldestActiveTwigID, ctx.serialNum >> datatree.TwigShift)
 
 	datatree.CompareTreeTwigs(ctx.tree, tree1)

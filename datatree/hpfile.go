@@ -17,7 +17,7 @@ var TotalWriteTime, TotalReadTime, TotalSyncTime uint64
 
 const (
 	BufferSize = 16*1024*1024
-	//BufferSize = 32*1024 //For UnitTest
+	SmallBufferSize = 32*1024 //For UnitTest
 	PreReadBufSize = 256*1024
 )
 

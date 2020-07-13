@@ -209,16 +209,16 @@ type Tree struct {
 	deactivedSNList     []int64
 }
 
-func NewEmptyTree(blockSize int, dirName string) *Tree {
+func NewEmptyTree(bufferSize, blockSize int, dirName string) *Tree {
 	dirEntry := filepath.Join(dirName, entriesPath)
 	os.Mkdir(dirEntry, 0700)
-	entryFile, err := NewEntryFile(BufferSize, blockSize, dirEntry)
+	entryFile, err := NewEntryFile(bufferSize, blockSize, dirEntry)
 	if err != nil {
 		panic(err)
 	}
 	dirTwigMt := filepath.Join(dirName, twigMtPath)
 	os.Mkdir(dirTwigMt, 0700)
-	twigMtFile, err := NewTwigMtFile(BufferSize, blockSize, dirTwigMt)
+	twigMtFile, err := NewTwigMtFile(bufferSize, blockSize, dirTwigMt)
 	if err != nil {
 		panic(err)
 	}

@@ -87,7 +87,7 @@ func NewOnvaKV(dirName string, canQueryHistory bool, startEndKeys [][]byte) (*On
 	}
 
 	if dirNotExists { // Create a new database in this dir
-		okv.datTree = datatree.NewEmptyTree(defaultFileSize, dirName)
+		okv.datTree = datatree.NewEmptyTree(datatree.BufferSize, defaultFileSize, dirName)
 		if canQueryHistory {
 			okv.idxTree = indextree.NewNVTreeMem(okv.rocksdb)
 		} else {
@@ -109,10 +109,10 @@ func NewOnvaKV(dirName string, canQueryHistory bool, startEndKeys [][]byte) (*On
 		youngestTwigID := okv.meta.GetMaxSerialNum() >> datatree.TwigShift
 		bz := okv.meta.GetEdgeNodes()
 		edgeNodes := datatree.BytesToEdgeNodes(bz)
-		okv.datTree = datatree.RecoverTree(defaultFileSize, dirName, edgeNodes,
+		okv.datTree = datatree.RecoverTree(datatree.BufferSize, defaultFileSize, dirName, edgeNodes,
 			okv.meta.GetLastPrunedTwig(), oldestActiveTwigID, youngestTwigID)
 	} else { // OnvaKV is closed properly
-		okv.datTree = datatree.LoadTree(defaultFileSize, dirName)
+		okv.datTree = datatree.LoadTree(datatree.BufferSize, defaultFileSize, dirName)
 	}
 
 	if dirNotExists {
@@ -127,10 +127,10 @@ func NewOnvaKV(dirName string, canQueryHistory bool, startEndKeys [][]byte) (*On
 		okv.idxTree = indextree.NewNVTreeMem(nil)
 		oldestActiveTwigID := okv.meta.GetOldestActiveTwigID()
 		okv.idxTree.BeginWrite(0) // we set height=0 here, which will not be used 
-		entryXChan := make(chan types.EntryX, 100)
-		go okv.datTree.ScanEntries(oldestActiveTwigID, entryXChan)
-		for e := range entryXChan {
-			okv.idxTree.Set(e.Entry.Key, uint64(e.Pos))
+		keyAndPosChan := make(chan types.KeyAndPos, 100)
+		go okv.datTree.ScanEntriesLite(oldestActiveTwigID, keyAndPosChan)
+		for e := range keyAndPosChan {
+			okv.idxTree.Set(e.Key, uint64(e.Pos))
 		}
 		okv.idxTree.EndWrite()
 	}

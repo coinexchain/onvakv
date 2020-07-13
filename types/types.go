@@ -15,6 +15,11 @@ type EntryX struct {
 	DeactivedSNList []int64
 }
 
+type KeyAndPos struct {
+	Key []byte
+	Pos int64
+}
+
 type OperationOnEntry int32
 
 const (
@@ -64,6 +69,7 @@ type DataTree interface {
 	EvictTwig(twigID int64)
 	GetActiveEntriesInTwig(twigID int64) chan []byte
 	ScanEntries(oldestActiveTwigID int64, outChan chan EntryX)
+	ScanEntriesLite(oldestActiveTwigID int64, outChan chan KeyAndPos)
 	TwigCanBePruned(twigID int64) bool
 	PruneTwigs(startID, endID int64) []byte
 	GetFileSizes() (int64, int64)

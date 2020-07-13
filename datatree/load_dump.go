@@ -229,14 +229,14 @@ func (tree *Tree) Flush() {
 	}
 }
 
-func LoadTree(blockSize int, dirName string) *Tree {
+func LoadTree(bufferSize, blockSize int, dirName string) *Tree {
 	dirEntry := filepath.Join(dirName, entriesPath)
-	entryFile, err := NewEntryFile(BufferSize, blockSize, dirEntry)
+	entryFile, err := NewEntryFile(bufferSize, blockSize, dirEntry)
 	if err != nil {
 		panic(err)
 	}
 	dirTwigMt := filepath.Join(dirName, twigMtPath)
-	twigMtFile, err := NewTwigMtFile(BufferSize, blockSize, dirTwigMt)
+	twigMtFile, err := NewTwigMtFile(bufferSize, blockSize, dirTwigMt)
 	if err != nil {
 		panic(err)
 	}
@@ -342,14 +342,20 @@ func (tree *Tree) ScanEntries(oldestActiveTwigID int64, outChan chan types.Entry
 		//!! 	entryBz, nxt := tree.entryFile.ReadEntryRawBytes(pos)
 		//!! 	fmt.Printf("Fuck now pos %d %#v len=%d nxt=%d\n", pos, entryBz, len(entryBz), nxt)
 		//!! }
-		entry, deactivedSNList, nextPos := tree.entryFile.ReadEntryAndSNList(pos)
-		//if Debug {
-		//	if pos == 106245928 {
-		//		fmt.Printf("Now handle %d pos %d nextPos %d\n", entry.SerialNum, pos, nextPos)
-		//	}
-		//}
-		outChan <- types.EntryX{entry, pos, deactivedSNList}
+		key, deactivedSNList, nextPos := tree.entryFile.ReadEntryAndSNList(pos)
+		outChan <- types.EntryX{key, pos, deactivedSNList}
 		pos = nextPos
+	}
+	close(outChan)
+}
+
+func (tree *Tree) ScanEntriesLite(oldestActiveTwigID int64, outChan chan types.KeyAndPos) {
+	pos := tree.twigMtFile.GetFirstEntryPos(oldestActiveTwigID)
+	size := tree.entryFile.Size()
+	for pos < size {
+		entryBz, next := tree.entryFile.ReadEntryRawBytes(pos)
+		outChan <- types.KeyAndPos{ExtractKeyFromRawBytes(entryBz), pos}
+		pos = next
 	}
 	close(outChan)
 }
@@ -401,14 +407,14 @@ func (tree *Tree) RecoverInactiveTwigRoots(lastPrunedTwigID, oldestActiveTwigID 
 	return
 }
 
-func RecoverTree(blockSize int, dirName string, edgeNodes []*EdgeNode, lastPrunedTwigID, oldestActiveTwigID, youngestTwigID int64) *Tree {
+func RecoverTree(bufferSize, blockSize int, dirName string, edgeNodes []*EdgeNode, lastPrunedTwigID, oldestActiveTwigID, youngestTwigID int64) *Tree {
 	dirEntry := filepath.Join(dirName, entriesPath)
-	entryFile, err := NewEntryFile(BufferSize, blockSize, dirEntry)
+	entryFile, err := NewEntryFile(bufferSize, blockSize, dirEntry)
 	if err != nil {
 		panic(err)
 	}
 	dirTwigMt := filepath.Join(dirName, twigMtPath)
-	twigMtFile, err := NewTwigMtFile(BufferSize, blockSize, dirTwigMt)
+	twigMtFile, err := NewTwigMtFile(bufferSize, blockSize, dirTwigMt)
 	if err != nil {
 		panic(err)
 	}

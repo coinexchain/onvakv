@@ -83,6 +83,10 @@ func (dt *MockDataTree) ScanEntries(oldestActiveTwigID int64, outChan chan types
 	panic(fmt.Sprintf("ScanEntries not implemented. oldestActiveTwigID=%d", oldestActiveTwigID))
 }
 
+func (dt *MockDataTree) ScanEntriesLite(oldestActiveTwigID int64, outChan chan types.KeyAndPos) {
+	panic(fmt.Sprintf("ScanEntriesLite not implemented. oldestActiveTwigID=%d", oldestActiveTwigID))
+}
+
 func (dt *MockDataTree) TwigCanBePruned(twigID int64) bool {
 	_, ok := dt.twigs[twigID]
 	return !ok

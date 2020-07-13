@@ -43,14 +43,14 @@ func TestLoadTree(t *testing.T) {
 	tree0.Flush()
 	tree0.Close()
 
-	tree1 := LoadTree(defaultFileSize, dirName)
+	tree1 := LoadTree(SmallBufferSize, defaultFileSize, dirName)
 	fmt.Printf("Load finished\n")
 	compareNodes(t, tree1.nodes, nodes0)
 	compareTwigs(t, tree1.activeTwigs, activeTwigs0)
 	assert.Equal(t, tree1.mtree4YoungestTwig, mtree4YoungestTwig0)
 	tree1.Close()
 
-	tree2 := RecoverTree(defaultFileSize, dirName, nil, 0, 0, 1)
+	tree2 := RecoverTree(SmallBufferSize, defaultFileSize, dirName, nil, 0, 0, 1)
 	fmt.Printf("Recover finished\n")
 	assert.Equal(t, tree2.mtree4YoungestTwig, mtree4YoungestTwig0)
 	compareTwigs(t, tree2.activeTwigs, activeTwigs0)
