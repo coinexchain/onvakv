@@ -217,17 +217,17 @@ func EntryFromBytes(b []byte, numberOfSN int) (*Entry, []int64) {
 
 	length := int(binary.LittleEndian.Uint32(b[i : i+4]))
 	i += 4
-	entry.Key = append([]byte{}, b[i:i+length]...)
+	entry.Key = b[i:i+length]
 	i += length
 
 	length = int(binary.LittleEndian.Uint32(b[i : i+4]))
 	i += 4
-	entry.Value = append([]byte{}, b[i:i+length]...)
+	entry.Value = b[i:i+length]
 	i += length
 
 	length = int(binary.LittleEndian.Uint32(b[i : i+4]))
 	i += 4
-	entry.NextKey = append([]byte{}, b[i:i+length]...)
+	entry.NextKey = b[i:i+length]
 	i += length
 
 	entry.Height = int64(binary.LittleEndian.Uint64(b[i : i+8]))

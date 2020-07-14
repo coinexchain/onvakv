@@ -11,6 +11,7 @@ import (
 
 	"github.com/mmcloughlin/meow"
 	"github.com/dterei/gotsc"
+	//"github.com/pkg/profile"
 
 	"github.com/coinexchain/onvakv"
 	"github.com/coinexchain/onvakv/datatree"
@@ -212,6 +213,7 @@ func RunTx(numBlock int, txFile string) {
 	fmt.Printf("Loaded %f\n", float64(time.Now().UnixNano())/1e9)
 	startHeight := okv.GetCurrHeight() + 1
 	root := store.NewRootStore(okv, nil, nil)
+	//pjob := profile.Start()
 	for i := 0; i < numBlock; i++ {
 		start := gotsc.BenchStart()
 		height := startHeight+int64(i)
@@ -234,6 +236,7 @@ func RunTx(numBlock int, txFile string) {
 		root.EndWrite()
 		Phase2Time += gotsc.BenchEnd() - start - tscOverhead
 	}
+	//pjob.Stop()
 	fmt.Printf("Finished %f\n", float64(time.Now().UnixNano())/1e9)
 	fmt.Printf("phase1 time %d\n", Phase1Time)
 	fmt.Printf("phase2 time %d\n", Phase2Time)
@@ -256,4 +259,14 @@ onvakv.phase1 time 0
 onvakv.phase2 time 0
 onvakv.phase3 time 49584349112
 onvakv.phase4 time 143403222792
+
+Finished 1594699845.963070
+phase1 time 1950429877590
+phase2 time 1731343352988
+onvakv.phase0 time 0
+onvakv.pha1n2 time 829604727502
+onvakv.phase1 time 0
+onvakv.phase2 time 0
+onvakv.phase3 time 328017075308
+onvakv.phase4 time 399895217040
 */

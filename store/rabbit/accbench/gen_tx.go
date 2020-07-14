@@ -135,7 +135,7 @@ func RunGenerateTxFile(epochCount int, totalAccounts uint64, jsonFilename, randF
 	// we must filter away the TXs which conflict with existing TXs in the epoch
 	for i := 0; i < epochCount; i++ {
 		if i % 100 == 0 {
-			fmt.Printf("Now %d\n", i)
+			fmt.Printf("Now %d of %d\n", i, epochCount)
 		}
 		txCount := 0
 		touchedNum := make(map[[rabbit.KeySize]byte]struct{}, 2*NumTxInEpoch)

@@ -12,6 +12,7 @@ import (
 
 	sha256 "github.com/minio/sha256-simd"
 	"github.com/coinexchain/randsrc"
+	"github.com/pkg/profile"
 
 	"github.com/coinexchain/onvakv"
 	"github.com/coinexchain/onvakv/datatree"
@@ -163,6 +164,7 @@ func RunCheckAccounts(numAccounts int, randFilename string) {
 		panic("numAccounts % NumNewAccountsInBlock != 0")
 	}
 	numBlocks := numAccounts / NumNewAccountsInBlock
+	pjob := profile.Start()
 	for i := 0; i < numBlocks; i++ {
 		root.SetHeight(int64(i))
 		if i % 100 == 0 {
@@ -171,6 +173,7 @@ func RunCheckAccounts(numAccounts int, randFilename string) {
 		snList := ReadOneBlockOfAccounts(f, i)
 		CheckAccountsInBlock(snList[:], root)
 	}
+	pjob.Stop()
 	fmt.Printf("Read Finished %f\n", float64(time.Now().UnixNano())/1000000000.0)
 
 	root.Close()
